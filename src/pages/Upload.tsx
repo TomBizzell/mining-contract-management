@@ -44,20 +44,22 @@ const Upload: React.FC = () => {
       const fileExt = file.name.split('.').pop();
       const filePath = `${userId}/${uuidv4()}.${fileExt}`;
       
+      // Track upload progress manually instead of using onUploadProgress
+      setUploadProgress(prev => ({ ...prev, [file.name]: 0 }));
+      
       const { error: uploadError, data } = await supabase.storage
         .from('contracts')
         .upload(filePath, file, {
           cacheControl: '3600',
-          upsert: false,
-          onUploadProgress: (progress) => {
-            const percent = Math.round((progress.loaded / progress.total) * 100);
-            setUploadProgress(prev => ({ ...prev, [file.name]: percent }));
-          }
+          upsert: false
         });
 
       if (uploadError) {
         throw uploadError;
       }
+      
+      // Set progress to 100% when upload is complete
+      setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
       
       return { path: filePath, size: file.size };
     } catch (error) {
@@ -79,14 +81,16 @@ const Upload: React.FC = () => {
     partyValue: string
   ) => {
     try {
-      const { error } = await supabase.from('documents').insert({
-        user_id: userId,
-        filename: fileName,
-        file_path: filePath,
-        file_size: fileSize,
-        party: partyValue,
-        status: 'pending'
-      });
+      const { error } = await supabase
+        .from('documents')
+        .insert({
+          user_id: userId,
+          filename: fileName,
+          file_path: filePath,
+          file_size: fileSize,
+          party: partyValue,
+          status: 'pending'
+        });
 
       if (error) {
         throw error;

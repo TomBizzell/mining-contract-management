@@ -6,20 +6,21 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { FileText, ArrowRight } from 'lucide-react';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import DropZone from '@/components/DropZone';
 import { useAuth } from '@/components/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+import { v4 as uuidv4 } from 'uuid';
 
 const Upload: React.FC = () => {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const [files, setFiles] = useState<File[]>([]);
   const [party, setParty] = useState<string>('');
-  const [customParty, setCustomParty] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [uploadProgress, setUploadProgress] = useState<{[key: string]: number}>({});
   const { toast } = useToast();
 
   // Redirect to auth page if not logged in
@@ -38,6 +39,94 @@ const Upload: React.FC = () => {
     setFiles(prevFiles => [...prevFiles, ...newFiles]);
   };
 
+  const uploadFileToSupabase = async (file: File, userId: string): Promise<{ path: string, size: number } | null> => {
+    try {
+      const fileExt = file.name.split('.').pop();
+      const filePath = `${userId}/${uuidv4()}.${fileExt}`;
+      
+      const { error: uploadError, data } = await supabase.storage
+        .from('contracts')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false,
+          onUploadProgress: (progress) => {
+            const percent = Math.round((progress.loaded / progress.total) * 100);
+            setUploadProgress(prev => ({ ...prev, [file.name]: percent }));
+          }
+        });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+      
+      return { path: filePath, size: file.size };
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      toast({
+        title: "Upload error",
+        description: `Failed to upload ${file.name}: ${error.message}`,
+        variant: "destructive",
+      });
+      return null;
+    }
+  };
+
+  const saveDocumentToDatabase = async (
+    userId: string, 
+    fileName: string, 
+    filePath: string, 
+    fileSize: number,
+    partyValue: string
+  ) => {
+    try {
+      const { error } = await supabase.from('documents').insert({
+        user_id: userId,
+        filename: fileName,
+        file_path: filePath,
+        file_size: fileSize,
+        party: partyValue,
+        status: 'pending'
+      });
+
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      console.error('Error saving document to database:', error);
+      toast({
+        title: "Database error",
+        description: `Failed to save document metadata: ${error.message}`,
+        variant: "destructive",
+      });
+      return false;
+    }
+    
+    return true;
+  };
+
+  const processDocuments = async () => {
+    try {
+      // Trigger the edge function to process documents
+      const { data, error } = await supabase.functions.invoke('process-documents', {
+        body: { userId: user?.id }
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error processing documents:', error);
+      toast({
+        title: "Processing error",
+        description: `Failed to process documents with OpenAI: ${error.message}`,
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -50,7 +139,7 @@ const Upload: React.FC = () => {
       return;
     }
     
-    if (!party) {
+    if (!party.trim()) {
       toast({
         title: "Party information missing",
         description: "Please specify which party you represent.",
@@ -59,21 +148,62 @@ const Upload: React.FC = () => {
       return;
     }
 
-    // This would be where we'd actually process the files
-    // For now, we'll just simulate a loading state and success
+    if (!user?.id) {
+      toast({
+        title: "Authentication required",
+        description: "Please sign in to upload contracts.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
+    // Initialize progress tracking
+    const initialProgress = {};
+    files.forEach(file => {
+      initialProgress[file.name] = 0;
+    });
+    setUploadProgress(initialProgress);
+    
+    // Upload each file to storage and save metadata
+    let allUploadsSuccessful = true;
+    for (const file of files) {
+      const uploadResult = await uploadFileToSupabase(file, user.id);
+      
+      if (!uploadResult) {
+        allUploadsSuccessful = false;
+        continue;
+      }
+      
+      const dbSaveResult = await saveDocumentToDatabase(
+        user.id,
+        file.name,
+        uploadResult.path,
+        uploadResult.size,
+        party
+      );
+      
+      if (!dbSaveResult) {
+        allUploadsSuccessful = false;
+      }
+    }
+    
+    if (allUploadsSuccessful) {
+      // Trigger processing on the server side
+      await processDocuments();
+      
       toast({
         title: "Upload successful",
         description: "Your contracts have been uploaded and are being processed.",
       });
       
-      // In a real application, we would redirect to a results page
-      // or show the analysis results here
-    }, 2000);
+      // Reset form
+      setFiles([]);
+      setParty('');
+    }
+    
+    setIsLoading(false);
   };
 
   // If still loading auth state, show loading indicator
@@ -124,30 +254,15 @@ const Upload: React.FC = () => {
                 </div>
                 
                 <div className="space-y-3">
-                  <Label htmlFor="party-select">Which party do you represent?</Label>
-                  <Select value={party} onValueChange={setParty}>
-                    <SelectTrigger id="party-select" className="w-full">
-                      <SelectValue placeholder="Select your party" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="first-party">First Party (Seller/Licensor)</SelectItem>
-                      <SelectItem value="second-party">Second Party (Buyer/Licensee)</SelectItem>
-                      <SelectItem value="custom">Other (specify)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  
-                  {party === 'custom' && (
-                    <div className="mt-3">
-                      <Label htmlFor="custom-party">Specify party name</Label>
-                      <Input
-                        id="custom-party"
-                        value={customParty}
-                        onChange={(e) => setCustomParty(e.target.value)}
-                        placeholder="Enter the name of your party"
-                        className="mt-1"
-                      />
-                    </div>
-                  )}
+                  <Label htmlFor="party-input">Which party do you represent?</Label>
+                  <Input
+                    id="party-input"
+                    type="text"
+                    value={party}
+                    onChange={(e) => setParty(e.target.value)}
+                    placeholder="Enter the name of your party (e.g., Company Name, LLC)"
+                    className="w-full"
+                  />
                 </div>
               </CardContent>
               

@@ -1,0 +1,268 @@
+
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import "https://deno.land/x/xhr@0.3.0/mod.ts";
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || 'https://yowihgrlmntraktvruve.supabase.co';
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    // Verify request has authorization
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'No authorization header provided' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Parse request body
+    const { userId } = await req.json();
+    if (!userId) {
+      return new Response(
+        JSON.stringify({ error: 'User ID is required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Create Supabase client with service role key for admin access
+    const supabaseAdmin = createClient(
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY ?? ''
+    );
+
+    // Get pending documents for the user
+    const { data: documents, error: docError } = await supabaseAdmin
+      .from('documents')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .is('openai_file_id', null);
+
+    if (docError) {
+      throw new Error(`Error fetching documents: ${docError.message}`);
+    }
+
+    console.log(`Found ${documents.length} pending documents to process`);
+
+    // Process each document in sequence
+    const results = [];
+    for (const doc of documents) {
+      const result = await processDocument(supabaseAdmin, doc);
+      results.push(result);
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, processed: results.length, results }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  } catch (error) {
+    console.error('Error processing documents:', error);
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+});
+
+async function processDocument(supabaseAdmin, document) {
+  try {
+    console.log(`Processing document: ${document.filename}`);
+
+    // Get file from storage bucket
+    const { data: fileData, error: fileError } = await supabaseAdmin.storage
+      .from('contracts')
+      .download(document.file_path);
+
+    if (fileError) {
+      throw new Error(`Error downloading file: ${fileError.message}`);
+    }
+
+    // Convert file to FormData for OpenAI API
+    const formData = new FormData();
+    formData.append('purpose', 'user_data');
+    formData.append('file', new File([fileData], document.filename, { type: 'application/pdf' }));
+
+    // Submit file to OpenAI API
+    const openAIResponse = await fetch('https://api.openai.com/v1/files', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: formData,
+    });
+
+    const openAIData = await openAIResponse.json();
+
+    if (!openAIResponse.ok) {
+      throw new Error(`OpenAI API error: ${JSON.stringify(openAIData)}`);
+    }
+
+    console.log(`OpenAI file uploaded: ${openAIData.id}`);
+
+    // Update document record with OpenAI file ID
+    const { error: updateError } = await supabaseAdmin
+      .from('documents')
+      .update({
+        openai_file_id: openAIData.id,
+        status: 'processed',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', document.id);
+
+    if (updateError) {
+      throw new Error(`Error updating document: ${updateError.message}`);
+    }
+
+    return {
+      documentId: document.id,
+      filename: document.filename,
+      openai_file_id: openAIData.id,
+      status: 'processed'
+    };
+  } catch (error) {
+    console.error(`Error processing document ${document.id}:`, error);
+
+    // Update document status to error
+    await supabaseAdmin
+      .from('documents')
+      .update({
+        status: 'error',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', document.id);
+
+    return {
+      documentId: document.id,
+      filename: document.filename,
+      status: 'error',
+      error: error.message
+    };
+  }
+}
+
+// Helper function to create a Supabase client
+function createClient(supabaseUrl, supabaseKey) {
+  return {
+    from: (table) => ({
+      select: (columns) => ({
+        eq: (column, value) => ({
+          is: (column2, value2) => ({
+            data: null,
+            error: null,
+            execute: async () => {
+              const url = `${supabaseUrl}/rest/v1/${table}?select=${columns || '*'}&${column}=eq.${value}&${column2}=is.${value2}`;
+              const response = await fetch(url, {
+                headers: {
+                  'Authorization': `Bearer ${supabaseKey}`,
+                  'apikey': supabaseKey,
+                }
+              });
+              const data = await response.json();
+              return { data, error: null };
+            }
+          }),
+          execute: async () => {
+            const url = `${supabaseUrl}/rest/v1/${table}?select=${columns || '*'}&${column}=eq.${value}`;
+            const response = await fetch(url, {
+              headers: {
+                'Authorization': `Bearer ${supabaseKey}`,
+                'apikey': supabaseKey,
+              }
+            });
+            const data = await response.json();
+            return { data, error: null };
+          }
+        }),
+        execute: async () => {
+          const url = `${supabaseUrl}/rest/v1/${table}?select=${columns || '*'}`;
+          const response = await fetch(url, {
+            headers: {
+              'Authorization': `Bearer ${supabaseKey}`,
+              'apikey': supabaseKey,
+            }
+          });
+          const data = await response.json();
+          return { data, error: null };
+        }
+      }),
+      update: (updates) => ({
+        eq: (column, value) => ({
+          execute: async () => {
+            const url = `${supabaseUrl}/rest/v1/${table}?${column}=eq.${value}`;
+            const response = await fetch(url, {
+              method: 'PATCH',
+              headers: {
+                'Authorization': `Bearer ${supabaseKey}`,
+                'apikey': supabaseKey,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+              },
+              body: JSON.stringify(updates)
+            });
+            
+            if (!response.ok) {
+              const error = await response.json();
+              return { error };
+            }
+            
+            return { error: null };
+          }
+        })
+      }),
+      insert: (data) => ({
+        execute: async () => {
+          const url = `${supabaseUrl}/rest/v1/${table}`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${supabaseKey}`,
+              'apikey': supabaseKey,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify(data)
+          });
+          
+          if (!response.ok) {
+            const error = await response.json();
+            return { error };
+          }
+          
+          return { error: null };
+        }
+      })
+    }),
+    storage: {
+      from: (bucket) => ({
+        download: async (path) => {
+          const url = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
+          const response = await fetch(url, {
+            headers: {
+              'Authorization': `Bearer ${supabaseKey}`,
+              'apikey': supabaseKey,
+            }
+          });
+          
+          if (!response.ok) {
+            return { error: { message: response.statusText } };
+          }
+          
+          const data = await response.arrayBuffer();
+          return { data: new Uint8Array(data), error: null };
+        }
+      })
+    }
+  };
+}

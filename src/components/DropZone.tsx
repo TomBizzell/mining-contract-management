@@ -68,7 +68,7 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesAdded, files, setFiles }) =>
   return (
     <div className="space-y-4">
       <div 
-        className={`drop-zone ${isDragging ? 'active' : ''}`}
+        className={`border-2 border-dashed ${isDragging ? 'border-px4-teal bg-blue-50' : 'border-gray-300'} rounded-lg p-6 transition-colors`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}

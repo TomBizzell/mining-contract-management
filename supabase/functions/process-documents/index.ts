@@ -60,6 +60,12 @@ serve(async (req) => {
     const results = [];
     for (const doc of documents) {
       const result = await processDocument(supabaseAdmin, doc);
+      
+      // After uploading to OpenAI Files API, analyze the document
+      if (result.status === 'processed' && result.openai_file_id) {
+        await analyzeDocument(supabaseAdmin, result.documentId, result.openai_file_id, doc.party);
+      }
+      
       results.push(result);
     }
 
@@ -76,7 +82,7 @@ serve(async (req) => {
   }
 });
 
-async function processDocument(supabaseAdmin, document) {
+async function processDocument(supabaseAdmin: any, document: any) {
   try {
     console.log(`Processing document: ${document.filename}`);
 
@@ -116,7 +122,7 @@ async function processDocument(supabaseAdmin, document) {
       .from('documents')
       .update({
         openai_file_id: openAIData.id,
-        status: 'processed',
+        status: 'processing', // Change status to processing before analysis
         updated_at: new Date().toISOString(),
       })
       .eq('id', document.id);
@@ -152,13 +158,105 @@ async function processDocument(supabaseAdmin, document) {
   }
 }
 
+async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: string, party: string) {
+  try {
+    console.log(`Analyzing document ${documentId} with file ID ${fileId} for party: ${party}`);
+    
+    // Create the analysis prompt using the party information
+    const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'file_path',
+                file_id: fileId
+              },
+              {
+                type: 'text',
+                text: `You are a contract manager for ${party}. Extract the key obligations that ${party} has under the contract. If an obligation is time-based, the due date should be extracted too. This should be output strictly and entirely as json with each obligation, the section of the contract and it's due date (if any) identified.`
+              }
+            ]
+          }
+        ]
+      })
+    });
+
+    const analysisData = await openAIResponse.json();
+    
+    if (!openAIResponse.ok) {
+      throw new Error(`OpenAI Analysis API error: ${JSON.stringify(analysisData)}`);
+    }
+    
+    console.log(`Analysis complete for document ${documentId}`);
+    
+    // Extract the generated JSON from the response
+    const analysisContent = analysisData.choices[0].message.content;
+    let obligationsJson;
+    
+    try {
+      // Try to parse the response as JSON
+      obligationsJson = JSON.parse(analysisContent);
+    } catch (e) {
+      console.error("Failed to parse OpenAI response as JSON:", e);
+      // If parsing fails, store the raw text
+      obligationsJson = { raw_response: analysisContent };
+    }
+    
+    // Update the document with the analysis results
+    const { error: updateError } = await supabaseAdmin
+      .from('documents')
+      .update({
+        analysis_results: obligationsJson,
+        status: 'analyzed',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', documentId);
+    
+    if (updateError) {
+      throw new Error(`Error updating document with analysis: ${updateError.message}`);
+    }
+    
+    return {
+      documentId,
+      status: 'analyzed',
+      obligationsCount: Array.isArray(obligationsJson) ? obligationsJson.length : null
+    };
+  } catch (error) {
+    console.error(`Error analyzing document ${documentId}:`, error);
+    
+    // Update document status to analysis_error
+    await supabaseAdmin
+      .from('documents')
+      .update({
+        status: 'analysis_error',
+        error_message: error.message,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', documentId);
+    
+    return {
+      documentId,
+      status: 'analysis_error',
+      error: error.message
+    };
+  }
+}
+
 // Helper function to create a Supabase client
-function createClient(supabaseUrl, supabaseKey) {
+function createClient(supabaseUrl: string, supabaseKey: string) {
   return {
-    from: (table) => ({
-      select: (columns) => ({
-        eq: (column, value) => ({
-          is: (column2, value2) => ({
+    from: (table: string) => ({
+      select: (columns?: string) => ({
+        eq: (column: string, value: any) => ({
+          is: (column2: string, value2: any) => ({
             data: null,
             error: null,
             execute: async () => {
@@ -197,8 +295,8 @@ function createClient(supabaseUrl, supabaseKey) {
           return { data, error: null };
         }
       }),
-      update: (updates) => ({
-        eq: (column, value) => ({
+      update: (updates: any) => ({
+        eq: (column: string, value: any) => ({
           execute: async () => {
             const url = `${supabaseUrl}/rest/v1/${table}?${column}=eq.${value}`;
             const response = await fetch(url, {
@@ -221,7 +319,7 @@ function createClient(supabaseUrl, supabaseKey) {
           }
         })
       }),
-      insert: (data) => ({
+      insert: (data: any) => ({
         execute: async () => {
           const url = `${supabaseUrl}/rest/v1/${table}`;
           const response = await fetch(url, {
@@ -245,8 +343,8 @@ function createClient(supabaseUrl, supabaseKey) {
       })
     }),
     storage: {
-      from: (bucket) => ({
-        download: async (path) => {
+      from: (bucket: string) => ({
+        download: async (path: string) => {
           const url = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
           const response = await fetch(url, {
             headers: {

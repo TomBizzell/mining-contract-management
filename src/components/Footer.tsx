@@ -4,35 +4,55 @@ import { Link } from 'react-router-dom';
 
 const Footer: React.FC = () => {
   return (
-    <footer className="bg-px4-navy text-white py-12 px-4 sm:px-6">
-      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8">
-        <div className="col-span-1 md:col-span-2">
-          <h3 className="font-bold text-xl mb-4">PX4 Obligation Manager</h3>
-          <p className="text-gray-300 mb-4 max-w-md">
-            Upload your contracts and generate a comprehensive obligations registry to stay
-            on top of your legal commitments.
-          </p>
-          <p className="text-gray-300">© {new Date().getFullYear()} PX4 Obligation Manager. All rights reserved.</p>
-        </div>
-        
-        <div>
-          <h4 className="font-semibold text-lg mb-4">Product</h4>
-          <ul className="space-y-2 text-gray-300">
-            <li><Link to="/" className="hover:text-px4-teal transition-colors">Home</Link></li>
-            <li><Link to="/upload" className="hover:text-px4-teal transition-colors">Upload Contracts</Link></li>
-            <li><Link to="#" className="hover:text-px4-teal transition-colors">Features</Link></li>
-            <li><Link to="#" className="hover:text-px4-teal transition-colors">Pricing</Link></li>
-          </ul>
-        </div>
-        
-        <div>
-          <h4 className="font-semibold text-lg mb-4">Support</h4>
-          <ul className="space-y-2 text-gray-300">
-            <li><Link to="#" className="hover:text-px4-teal transition-colors">Help Center</Link></li>
-            <li><Link to="#" className="hover:text-px4-teal transition-colors">Documentation</Link></li>
-            <li><Link to="#" className="hover:text-px4-teal transition-colors">Privacy Policy</Link></li>
-            <li><Link to="#" className="hover:text-px4-teal transition-colors">Terms of Service</Link></li>
-          </ul>
+    <footer className="bg-px4-navy text-white py-8 px-4 sm:px-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex flex-col md:flex-row justify-between">
+          <div className="mb-6 md:mb-0">
+            <h2 className="text-xl font-bold">
+              PX4 <span className="text-px4-teal">Obligation Manager</span>
+            </h2>
+            <p className="mt-2 text-gray-300 max-w-xs">
+              Simplify contract obligation management with AI-powered analysis
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-2">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-px4-teal">
+                Navigation
+              </h3>
+              <ul className="mt-4 space-y-2">
+                <li>
+                  <Link to="/" className="text-gray-300 hover:text-white">
+                    Home
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/upload" className="text-gray-300 hover:text-white">
+                    Upload
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/auth" className="text-gray-300 hover:text-white">
+                    Sign In
+                  </Link>
+                </li>
+              </ul>
+            </div>
+            
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-px4-teal">
+                Legal
+              </h3>
+              <ul className="mt-4 space-y-2">
+                <li>
+                  <span className="text-gray-300">
+                    &copy; {new Date().getFullYear()} PX4 Obligation Manager
+                  </span>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </footer>

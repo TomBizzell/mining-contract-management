@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,13 +11,28 @@ import { FileText, ArrowRight } from 'lucide-react';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import DropZone from '@/components/DropZone';
+import { useAuth } from '@/components/AuthContext';
 
 const Upload: React.FC = () => {
+  const navigate = useNavigate();
+  const { user, loading } = useAuth();
   const [files, setFiles] = useState<File[]>([]);
   const [party, setParty] = useState<string>('');
   const [customParty, setCustomParty] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const { toast } = useToast();
+
+  // Redirect to auth page if not logged in
+  useEffect(() => {
+    if (!loading && !user) {
+      toast({
+        title: "Authentication required",
+        description: "Please sign in to access this page.",
+        variant: "destructive",
+      });
+      navigate('/auth');
+    }
+  }, [user, loading, navigate, toast]);
 
   const handleFilesAdded = (newFiles: File[]) => {
     setFiles(prevFiles => [...prevFiles, ...newFiles]);
@@ -59,6 +75,19 @@ const Upload: React.FC = () => {
       // or show the analysis results here
     }, 2000);
   };
+
+  // If still loading auth state, show loading indicator
+  if (loading) {
+    return (
+      <div className="flex flex-col min-h-screen">
+        <Header />
+        <main className="flex-grow flex items-center justify-center">
+          <div className="animate-spin h-8 w-8 border-4 border-px4-teal border-t-transparent rounded-full"></div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen">

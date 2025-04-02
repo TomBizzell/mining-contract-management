@@ -6,8 +6,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { CheckCircle, FileText, List, Search, Upload, Clock } from 'lucide-react';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
+import { useAuth } from '@/components/AuthContext';
 
 const Index: React.FC = () => {
+  const { user } = useAuth();
+
   const features = [
     {
       icon: <Upload className="h-8 w-8 text-px4-teal" />,
@@ -48,12 +51,15 @@ const Index: React.FC = () => {
                   Upload your contracts, specify your party, and generate a comprehensive obligations registry in minutes.
                 </p>
                 <div className="mt-8 flex flex-col sm:flex-row justify-center md:justify-start gap-4">
-                  <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
-                    <Link to="/upload">Upload Contracts</Link>
-                  </Button>
-                  <Button asChild variant="outline" size="lg">
-                    <Link to="#">Learn More</Link>
-                  </Button>
+                  {user ? (
+                    <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
+                      <Link to="/upload">Upload Contracts</Link>
+                    </Button>
+                  ) : (
+                    <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
+                      <Link to="/auth">Get Started</Link>
+                    </Button>
+                  )}
                 </div>
               </div>
               <div className="hidden md:block relative animate-fade-in">
@@ -114,9 +120,15 @@ const Index: React.FC = () => {
             <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
               Join hundreds of legal professionals who save time and reduce risk with PX4 Obligation Manager.
             </p>
-            <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
-              <Link to="/upload">Get Started Now</Link>
-            </Button>
+            {user ? (
+              <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
+                <Link to="/upload">Upload Your Contracts</Link>
+              </Button>
+            ) : (
+              <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
+                <Link to="/auth">Get Started Now</Link>
+              </Button>
+            )}
           </div>
         </section>
       </main>

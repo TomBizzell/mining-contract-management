@@ -42,12 +42,14 @@ serve(async (req) => {
     );
 
     // Get pending documents for the user
+    console.log(`Fetching pending documents for user: ${userId}`);
     const { data: documents, error: docError } = await supabaseAdmin
       .from('documents')
       .select('*')
-      .eq('user_id', userId)
-      .eq('status', 'pending')
-      .is('openai_file_id', null);
+      .filter('user_id', 'eq', userId)
+      .filter('status', 'eq', 'pending')
+      .filter('openai_file_id', 'is', null)
+      .execute();
 
     if (docError) {
       throw new Error(`Error fetching documents: ${docError.message}`);
@@ -288,6 +290,14 @@ function createClient(supabaseUrl: string, supabaseKey: string) {
               return { data, error: null };
             }
           }),
+          eq: (column2: string, value2: any) => {
+            // This is a stub that will be overridden by the filter approach
+            console.error("Multiple .eq() chaining is not supported. Please use filter() instead.");
+            return {
+              is: () => ({ execute: async () => ({ data: [], error: "Multiple .eq() chaining is not supported" }) }),
+              execute: async () => ({ data: [], error: "Multiple .eq() chaining is not supported" })
+            };
+          },
           execute: async () => {
             const url = `${supabaseUrl}/rest/v1/${table}?select=${columns || '*'}&${column}=eq.${value}`;
             const response = await fetch(url, {
@@ -300,6 +310,44 @@ function createClient(supabaseUrl: string, supabaseKey: string) {
             return { data, error: null };
           }
         }),
+        filter: (column: string, operator: string, value: any) => {
+          // Create a new filter builder that supports chaining
+          const filters: Array<{column: string, operator: string, value: any}> = [
+            { column, operator, value }
+          ];
+          
+          const filterBuilder = {
+            filter: (col: string, op: string, val: any) => {
+              filters.push({ column: col, operator: op, value: val });
+              return filterBuilder;
+            },
+            execute: async () => {
+              // Build URL with all filters
+              let url = `${supabaseUrl}/rest/v1/${table}?select=${columns || '*'}`;
+              
+              filters.forEach(f => {
+                if (f.operator === 'eq') {
+                  url += `&${f.column}=eq.${f.value}`;
+                } else if (f.operator === 'is') {
+                  url += `&${f.column}=is.${f.value === null ? 'null' : f.value}`;
+                }
+                // Add more operators as needed
+              });
+              
+              const response = await fetch(url, {
+                headers: {
+                  'Authorization': `Bearer ${supabaseKey}`,
+                  'apikey': supabaseKey,
+                }
+              });
+              
+              const data = await response.json();
+              return { data, error: null };
+            }
+          };
+          
+          return filterBuilder;
+        },
         execute: async () => {
           const url = `${supabaseUrl}/rest/v1/${table}?select=${columns || '*'}`;
           const response = await fetch(url, {

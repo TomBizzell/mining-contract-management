@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -62,7 +61,7 @@ const ObligationsPage: React.FC = () => {
         
         const { data, error } = await supabase
           .from('documents')
-          .select('*')
+          .select('*, analysis_results')
           .eq('user_id', user.id)
           .eq('status', 'analyzed')
           .order('created_at', { ascending: false });

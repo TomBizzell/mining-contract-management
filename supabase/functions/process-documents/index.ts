@@ -97,7 +97,7 @@ async function processDocument(supabaseAdmin: any, document: any) {
 
     // Convert file to FormData for OpenAI API
     const formData = new FormData();
-    formData.append('purpose', 'user_data');
+    formData.append('purpose', 'assistants');
     formData.append('file', new File([fileData], document.filename, { type: 'application/pdf' }));
 
     // Submit file to OpenAI API
@@ -145,6 +145,7 @@ async function processDocument(supabaseAdmin: any, document: any) {
       .from('documents')
       .update({
         status: 'error',
+        error_message: error.message,
         updated_at: new Date().toISOString(),
       })
       .eq('id', document.id);

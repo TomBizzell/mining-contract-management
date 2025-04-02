@@ -8,6 +8,7 @@ import { AuthProvider } from "@/components/AuthContext";
 import Index from "./pages/Index";
 import Upload from "./pages/Upload";
 import Auth from "./pages/Auth";
+import ObligationsPage from "./pages/Obligations";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -23,6 +24,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/upload" element={<Upload />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/obligations" element={<ObligationsPage />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

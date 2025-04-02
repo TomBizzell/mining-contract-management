@@ -78,19 +78,22 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesAdded, files, setFiles }) =>
           <h3 className="text-lg font-medium text-gray-900">Drag and drop your contracts</h3>
           <p className="text-sm text-gray-500 mt-1">or</p>
           <div className="mt-4">
-            <label htmlFor="file-upload" className="cursor-pointer">
-              <Button type="button" variant="outline" className="mt-2">
-                Browse Files
-              </Button>
-              <input
-                id="file-upload"
-                type="file"
-                className="sr-only"
-                multiple
-                accept=".pdf"
-                onChange={handleFileInput}
-              />
-            </label>
+            <Button 
+              type="button" 
+              variant="outline" 
+              className="mt-2"
+              onClick={() => document.getElementById('file-upload')?.click()}
+            >
+              Browse Files
+            </Button>
+            <input
+              id="file-upload"
+              type="file"
+              className="sr-only"
+              multiple
+              accept=".pdf"
+              onChange={handleFileInput}
+            />
           </div>
           <p className="text-xs text-gray-500 mt-4">Only PDF files are accepted</p>
         </div>

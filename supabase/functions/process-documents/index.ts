@@ -179,11 +179,11 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
             role: 'user',
             content: [
               {
-                type: 'file_path',
+                type: 'input_file',
                 file_id: fileId
               },
               {
-                type: 'text',
+                type: 'input_text',
                 text: `You are a contract manager for ${party}. Extract the key obligations that ${party} has under the contract. If an obligation is time-based, the due date should be extracted too. This should be output strictly and entirely as json with each obligation, the section of the contract and it's due date (if any) identified.`
               }
             ]

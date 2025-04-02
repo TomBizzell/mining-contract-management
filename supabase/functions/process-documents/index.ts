@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.3.0/mod.ts";
 
@@ -164,6 +163,7 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
     console.log(`Analyzing document ${documentId} with file ID ${fileId} for party: ${party}`);
     
     // Create the analysis prompt using the party information
+    console.log(`Sending request to OpenAI API for document analysis`);
     const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -190,13 +190,16 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
       })
     });
 
+    console.log(`OpenAI API response received with status: ${openAIResponse.status}`);
     const analysisData = await openAIResponse.json();
     
     if (!openAIResponse.ok) {
+      console.error(`OpenAI API error details:`, JSON.stringify(analysisData));
       throw new Error(`OpenAI Analysis API error: ${JSON.stringify(analysisData)}`);
     }
     
-    console.log(`Analysis complete for document ${documentId}`);
+    console.log(`Analysis complete for document ${documentId}, processing response`);
+    console.log(`Raw analysis response:`, JSON.stringify(analysisData.choices?.[0]?.message?.content).substring(0, 200) + '...');
     
     // Extract the generated JSON from the response
     const analysisContent = analysisData.choices[0].message.content;
@@ -204,14 +207,25 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
     
     try {
       // Try to parse the response as JSON
+      console.log(`Attempting to parse OpenAI response as JSON`);
       obligationsJson = JSON.parse(analysisContent);
+      console.log(`Successfully parsed JSON. Found ${Array.isArray(obligationsJson) ? obligationsJson.length : 'unknown'} obligations`);
+      
+      // Validate the structure is as expected
+      if (Array.isArray(obligationsJson)) {
+        console.log(`Obligation array example:`, JSON.stringify(obligationsJson[0] || {}));
+      } else {
+        console.log(`WARNING: Obligations not in expected array format:`, typeof obligationsJson);
+      }
     } catch (e) {
       console.error("Failed to parse OpenAI response as JSON:", e);
+      console.error("Response content:", analysisContent.substring(0, 500) + (analysisContent.length > 500 ? '...' : ''));
       // If parsing fails, store the raw text
       obligationsJson = { raw_response: analysisContent };
     }
     
     // Update the document with the analysis results
+    console.log(`Updating document ${documentId} with analysis results in Supabase`);
     const { error: updateError } = await supabaseAdmin
       .from('documents')
       .update({
@@ -222,9 +236,11 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
       .eq('id', documentId);
     
     if (updateError) {
+      console.error(`Error updating document with analysis:`, updateError);
       throw new Error(`Error updating document with analysis: ${updateError.message}`);
     }
     
+    console.log(`Successfully updated document ${documentId} with analysis results`);
     return {
       documentId,
       status: 'analyzed',

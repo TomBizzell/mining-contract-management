@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -20,6 +21,7 @@ interface Obligation {
   obligation: string;
   section?: string;
   dueDate?: string;
+  raw_response?: string;
 }
 
 interface ContractObligations {
@@ -70,7 +72,17 @@ const ObligationsPage: React.FC = () => {
           throw error;
         }
         
-        setContracts(data || []);
+        // Make sure to properly cast the data to match our expected type
+        const typedData = data?.map(doc => ({
+          id: doc.id,
+          filename: doc.filename,
+          party: doc.party,
+          status: doc.status,
+          created_at: doc.created_at,
+          analysis_results: doc.analysis_results as Obligation[] | null
+        })) as ContractObligations[];
+        
+        setContracts(typedData || []);
       } catch (error) {
         console.error('Error fetching contracts:', error);
         toast({

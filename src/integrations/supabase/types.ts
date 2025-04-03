@@ -11,7 +11,9 @@ export type Database = {
     Tables: {
       documents: {
         Row: {
+          analysis_results: Json | null
           created_at: string
+          file_data: string | null
           file_path: string
           file_size: number
           filename: string
@@ -23,7 +25,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          analysis_results?: Json | null
           created_at?: string
+          file_data?: string | null
           file_path: string
           file_size: number
           filename: string
@@ -35,7 +39,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          analysis_results?: Json | null
           created_at?: string
+          file_data?: string | null
           file_path?: string
           file_size?: number
           filename?: string

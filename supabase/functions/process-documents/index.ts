@@ -1,5 +1,7 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.3.0/mod.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -68,17 +70,16 @@ serve(async (req) => {
     const { data: documents, error: docError } = await supabaseAdmin
       .from('documents')
       .select('*')
-      .filter('status', 'eq', 'pending')
-      .filter('openai_file_id', 'is', null)
-      .execute();
+      .eq('status', 'pending')
+      .is('openai_file_id', null);
 
     if (docError) {
       console.error(`[${requestId}] Error fetching documents:`, docError);
       throw new Error(`Error fetching documents: ${docError.message}`);
     }
 
-    console.log(`[${requestId}] Found ${documents.length} pending documents to process`);
-    if (documents.length === 0) {
+    console.log(`[${requestId}] Found ${documents?.length} pending documents to process`);
+    if (!documents || documents.length === 0) {
       console.log(`[${requestId}] No pending documents found`);
       return new Response(
         JSON.stringify({ success: true, processed: 0, message: 'No pending documents found' }),
@@ -141,8 +142,8 @@ serve(async (req) => {
   }
 });
 
-async function processDocument(supabaseAdmin: any, document: any) {
-  let uploadedFileId: string | null = null;
+async function processDocument(supabaseAdmin, document) {
+  let uploadedFileId = null;
   try {
     console.log(`[${document.id}] Starting document processing: ${document.filename}`);
 
@@ -206,17 +207,189 @@ async function processDocument(supabaseAdmin: any, document: any) {
       openai_file_id: uploadedFileId,
     };
   } catch (error) {
+    console.error(`[${document.id}] Error processing document:`, error);
+    
+    // Update document status to error
+    try {
+      await supabaseAdmin
+        .from('documents')
+        .update({
+          status: 'error',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', document.id);
+    } catch (updateError) {
+      console.error(`[${document.id}] Error updating document status to error:`, updateError);
+    }
+    
     return {
       status: 'error',
+      documentId: document.id,
       error: error.message,
     };
   }
 }
 
-async function analyzeDocument(supabaseAdmin: any, documentId: string, openai_file_id: string, party: string) {
-  // Implementation of analyzeDocument function
-}
+async function analyzeDocument(supabaseAdmin, documentId, openai_file_id, party) {
+  try {
+    console.log(`[${documentId}] Starting document analysis with OpenAI`);
+    
+    // Call OpenAI API to analyze the document
+    const analysisResponse = await fetch('https://api.openai.com/v1/threads/runs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'OpenAI-Beta': 'assistants=v1'
+      },
+      body: JSON.stringify({
+        assistant_id: "asst_abc123", // Replace with your Assistant ID
+        thread: {
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `You are a contract manager for ${party}. Extract the key obligations that ${party} has under the contract. If an obligation is time-based, the due date should be extracted too. Output ONLY a JSON array with each obligation containing 'obligation', 'section', and 'dueDate' fields.`
+                },
+                {
+                  type: "file_attachment",
+                  file_id: openai_file_id
+                }
+              ]
+            }
+          ]
+        }
+      })
+    });
 
-async function createClient(url: string, serviceRoleKey: string) {
-  // Implementation of createClient function
+    if (!analysisResponse.ok) {
+      const errorData = await analysisResponse.json();
+      throw new Error(`OpenAI API error: ${JSON.stringify(errorData)}`);
+    }
+
+    const analysisData = await analysisResponse.json();
+    console.log(`[${documentId}] Analysis submitted to OpenAI, run ID: ${analysisData.id}`);
+    
+    // Wait for the run to complete and get results
+    let runStatus = 'queued';
+    let runResult = null;
+    
+    while (['queued', 'in_progress'].includes(runStatus)) {
+      // Wait before checking status again
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const statusResponse = await fetch(`https://api.openai.com/v1/threads/runs/${analysisData.id}`, {
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'OpenAI-Beta': 'assistants=v1'
+        }
+      });
+      
+      if (!statusResponse.ok) {
+        const errorData = await statusResponse.json();
+        throw new Error(`Error checking run status: ${JSON.stringify(errorData)}`);
+      }
+      
+      const statusData = await statusResponse.json();
+      runStatus = statusData.status;
+      console.log(`[${documentId}] Current run status: ${runStatus}`);
+      
+      if (runStatus === 'completed') {
+        // Get the messages from the thread
+        const messagesResponse = await fetch(`https://api.openai.com/v1/threads/${analysisData.thread_id}/messages`, {
+          headers: {
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
+            'OpenAI-Beta': 'assistants=v1'
+          }
+        });
+        
+        if (!messagesResponse.ok) {
+          const errorData = await messagesResponse.json();
+          throw new Error(`Error fetching messages: ${JSON.stringify(errorData)}`);
+        }
+        
+        const messagesData = await messagesResponse.json();
+        // Get the first assistant message
+        const assistantMessage = messagesData.data.find(msg => msg.role === 'assistant');
+        
+        if (assistantMessage) {
+          runResult = assistantMessage.content[0].text.value;
+        }
+      } else if (['failed', 'cancelled', 'expired'].includes(runStatus)) {
+        throw new Error(`Run ended with status: ${runStatus}`);
+      }
+    }
+    
+    // Process the results
+    let obligations = [];
+    
+    if (runResult) {
+      try {
+        // Try to parse the JSON data from the response
+        // Extract just the JSON part if there's additional text
+        const jsonMatch = runResult.match(/\[.*\]/s);
+        if (jsonMatch) {
+          obligations = JSON.parse(jsonMatch[0]);
+        } else {
+          // If no JSON array found, store the raw response
+          obligations = [{
+            obligation: "Raw AI response (parsing failed)",
+            section: "N/A",
+            raw_response: runResult
+          }];
+        }
+      } catch (parseError) {
+        console.error(`[${documentId}] Error parsing analysis results:`, parseError);
+        obligations = [{
+          obligation: "Error parsing AI response",
+          section: "N/A",
+          raw_response: runResult
+        }];
+      }
+    }
+
+    // Update document with analysis results
+    console.log(`[${documentId}] Updating document with analysis results`);
+    const { error: updateError } = await supabaseAdmin
+      .from('documents')
+      .update({
+        status: 'analyzed',
+        analysis_results: obligations,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', documentId);
+
+    if (updateError) {
+      throw new Error(`Error updating document with analysis: ${updateError.message}`);
+    }
+
+    console.log(`[${documentId}] Document analysis completed successfully`);
+    return {
+      status: 'success',
+      documentId
+    };
+  } catch (error) {
+    console.error(`[${documentId}] Error analyzing document:`, error);
+    
+    // Update document status to error
+    try {
+      await supabaseAdmin
+        .from('documents')
+        .update({
+          status: 'error',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', documentId);
+    } catch (updateError) {
+      console.error(`[${documentId}] Error updating document status to error:`, updateError);
+    }
+    
+    return {
+      status: 'error',
+      documentId,
+      error: error.message
+    };
+  }
 }

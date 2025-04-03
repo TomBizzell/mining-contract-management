@@ -1,5 +1,5 @@
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import { useToast } from "@/components/ui/use-toast";
 import { Upload, File, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ interface DropZoneProps {
 
 const DropZone: React.FC<DropZoneProps> = ({ onFilesAdded, files, setFiles }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -61,6 +62,13 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesAdded, files, setFiles }) =>
     }
   }, [onFilesAdded, toast]);
 
+  const handleBrowseClick = () => {
+    // Ensure we're clicking the file input element properly
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
   const removeFile = (index: number) => {
     setFiles(prevFiles => prevFiles.filter((_, i) => i !== index));
   };
@@ -82,11 +90,12 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesAdded, files, setFiles }) =>
               type="button" 
               variant="outline" 
               className="mt-2"
-              onClick={() => document.getElementById('file-upload')?.click()}
+              onClick={handleBrowseClick}
             >
               Browse Files
             </Button>
             <input
+              ref={fileInputRef}
               id="file-upload"
               type="file"
               className="sr-only"

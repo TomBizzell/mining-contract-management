@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -62,7 +61,7 @@ const Upload: React.FC = () => {
       setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
       
       return { path: filePath, size: file.size };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error uploading file:', error);
       toast({
         title: "Upload error",
@@ -79,7 +78,7 @@ const Upload: React.FC = () => {
     filePath: string, 
     fileSize: number,
     partyValue: string
-  ) => {
+  ): Promise<boolean> => {
     try {
       const { error } = await supabase
         .from('documents')
@@ -95,7 +94,7 @@ const Upload: React.FC = () => {
       if (error) {
         throw error;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving document to database:', error);
       toast({
         title: "Database error",
@@ -108,19 +107,24 @@ const Upload: React.FC = () => {
     return true;
   };
 
-  const processDocuments = async () => {
+  const processDocuments = async (): Promise<boolean> => {
     try {
+      console.log("Triggering process-documents edge function");
+      
       // Trigger the edge function to process documents
       const { data, error } = await supabase.functions.invoke('process-documents', {
+        method: 'POST',
         body: { userId: user?.id }
       });
 
       if (error) {
+        console.error("Error from process-documents:", error);
         throw error;
       }
 
+      console.log("Successfully invoked process-documents function:", data);
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error processing documents:', error);
       toast({
         title: "Processing error",

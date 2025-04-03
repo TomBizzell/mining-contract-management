@@ -63,8 +63,8 @@ serve(async (req) => {
       const result = await processDocument(supabaseAdmin, doc);
       
       // After uploading to OpenAI Files API, analyze the document
-      if (result.status === 'processed' && result.file_data) {
-        await analyzeDocument(supabaseAdmin, result.documentId, result.file_data, doc.party);
+      if (result.status === 'processed' && result.openai_file_id) {
+        await analyzeDocument(supabaseAdmin, result.documentId, result.openai_file_id, doc.party);
       }
       
       results.push(result);
@@ -96,17 +96,33 @@ async function processDocument(supabaseAdmin: any, document: any) {
       throw new Error(`Error downloading file: ${fileError.message}`);
     }
 
-    // Convert file to base64
-    const base64String = Array.from(new Uint8Array(fileData))
-      .map(byte => String.fromCharCode(byte))
-      .join('');
-    const base64Data = `data:application/pdf;base64,${btoa(base64String)}`;
+    // Convert file to FormData for OpenAI Files API
+    const formData = new FormData();
+    formData.append('purpose', 'assistants');
+    formData.append('file', new File([fileData], document.filename, { type: 'application/pdf' }));
 
-    // Update document record with base64 data
+    // Submit file to OpenAI Files API
+    const openAIResponse = await fetch('https://api.openai.com/v1/files', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: formData,
+    });
+
+    const openAIData = await openAIResponse.json();
+
+    if (!openAIResponse.ok) {
+      throw new Error(`OpenAI API error: ${JSON.stringify(openAIData)}`);
+    }
+
+    console.log(`OpenAI file uploaded: ${openAIData.id}`);
+
+    // Update document record with OpenAI file ID
     const { error: updateError } = await supabaseAdmin
       .from('documents')
       .update({
-        file_data: base64Data,
+        openai_file_id: openAIData.id,
         status: 'processing',
         updated_at: new Date().toISOString(),
       })
@@ -119,7 +135,7 @@ async function processDocument(supabaseAdmin: any, document: any) {
     return {
       documentId: document.id,
       filename: document.filename,
-      file_data: base64Data,
+      openai_file_id: openAIData.id,
       status: 'processed'
     };
   } catch (error) {
@@ -144,9 +160,9 @@ async function processDocument(supabaseAdmin: any, document: any) {
   }
 }
 
-async function analyzeDocument(supabaseAdmin: any, documentId: string, fileData: string, party: string) {
+async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: string, party: string) {
   try {
-    console.log(`Analyzing document ${documentId} for party: ${party}`);
+    console.log(`Analyzing document ${documentId} with file ID ${fileId} for party: ${party}`);
     
     // Create the analysis prompt using the party information
     console.log(`Sending request to OpenAI API for document analysis`);
@@ -164,8 +180,7 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileData:
             content: [
               {
                 type: 'file',
-                filename: 'contract.pdf',
-                file_data: fileData
+                file_id: fileId
               },
               {
                 type: 'text',
@@ -185,11 +200,10 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileData:
       throw new Error(`OpenAI Analysis API error: ${JSON.stringify(analysisData)}`);
     }
     
-    console.log(`Analysis complete for document ${documentId}, processing response`);
-    console.log(`Raw analysis response:`, JSON.stringify(analysisData.choices?.[0]?.message?.content).substring(0, 200) + '...');
-    
-    // Extract the generated JSON from the response
     const analysisContent = analysisData.choices[0].message.content;
+    console.log(`Analysis complete for document ${documentId}, processing response`);
+    console.log(`Raw analysis response:`, analysisContent.substring(0, 200) + '...');
+    
     let obligationsJson;
     
     try {

@@ -97,8 +97,10 @@ async function processDocument(supabaseAdmin: any, document: any) {
     }
 
     // Convert file to base64
-    const base64String = btoa(String.fromCharCode(...new Uint8Array(fileData)));
-    const base64Data = `data:application/pdf;base64,${base64String}`;
+    const base64String = Array.from(new Uint8Array(fileData))
+      .map(byte => String.fromCharCode(byte))
+      .join('');
+    const base64Data = `data:application/pdf;base64,${btoa(base64String)}`;
 
     // Update document record with base64 data
     const { error: updateError } = await supabaseAdmin

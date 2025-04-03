@@ -11,8 +11,12 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || 'https://yowihgrlmntraktvru
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
 serve(async (req) => {
+  const requestId = crypto.randomUUID();
+  console.log(`[${requestId}] Edge function started at ${new Date().toISOString()}`);
+  
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
+    console.log(`[${requestId}] Handling CORS preflight request`);
     return new Response(null, { headers: corsHeaders });
   }
 
@@ -20,6 +24,7 @@ serve(async (req) => {
     // Verify request has authorization
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
+      console.log(`[${requestId}] No authorization header provided`);
       return new Response(
         JSON.stringify({ error: 'No authorization header provided' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -29,11 +34,14 @@ serve(async (req) => {
     // Parse request body
     const { userId } = await req.json();
     if (!userId) {
+      console.log(`[${requestId}] No user ID provided in request body`);
       return new Response(
         JSON.stringify({ error: 'User ID is required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    console.log(`[${requestId}] Processing request for user: ${userId}`);
 
     // Create Supabase client with service role key for admin access
     const supabaseAdmin = createClient(
@@ -42,7 +50,7 @@ serve(async (req) => {
     );
 
     // Get pending documents for the user
-    console.log(`Fetching pending documents for user: ${userId}`);
+    console.log(`[${requestId}] Fetching pending documents for user: ${userId}`);
     const { data: documents, error: docError } = await supabaseAdmin
       .from('documents')
       .select('*')
@@ -52,30 +60,39 @@ serve(async (req) => {
       .execute();
 
     if (docError) {
+      console.error(`[${requestId}] Error fetching documents:`, docError);
       throw new Error(`Error fetching documents: ${docError.message}`);
     }
 
-    console.log(`Found ${documents.length} pending documents to process`);
+    console.log(`[${requestId}] Found ${documents.length} pending documents to process`);
 
     // Process each document in sequence
     const results = [];
     for (const doc of documents) {
+      console.log(`[${requestId}] Starting processing for document: ${doc.id} (${doc.filename})`);
       const result = await processDocument(supabaseAdmin, doc);
       
       // After uploading to OpenAI Files API, analyze the document
       if (result.status === 'processed' && result.openai_file_id) {
+        console.log(`[${requestId}] Document ${doc.id} processed successfully, starting analysis`);
         await analyzeDocument(supabaseAdmin, result.documentId, result.openai_file_id, doc.party);
+      } else {
+        console.log(`[${requestId}] Document ${doc.id} processing status: ${result.status}`);
+        if (result.error) {
+          console.error(`[${requestId}] Document ${doc.id} processing error:`, result.error);
+        }
       }
       
       results.push(result);
     }
 
+    console.log(`[${requestId}] Edge function completed successfully. Processed ${results.length} documents`);
     return new Response(
       JSON.stringify({ success: true, processed: results.length, results }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('Error processing documents:', error);
+    console.error(`[${requestId}] Edge function error:`, error);
     return new Response(
       JSON.stringify({ error: error.message }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -86,16 +103,20 @@ serve(async (req) => {
 async function processDocument(supabaseAdmin: any, document: any) {
   let uploadedFileId: string | null = null;
   try {
-    console.log(`Processing document: ${document.filename}`);
+    console.log(`[${document.id}] Starting document processing: ${document.filename}`);
 
     // Get file from storage bucket
+    console.log(`[${document.id}] Downloading file from Supabase storage: ${document.file_path}`);
     const { data: fileData, error: fileError } = await supabaseAdmin.storage
       .from('contracts')
       .download(document.file_path);
 
     if (fileError) {
+      console.error(`[${document.id}] Error downloading file:`, fileError);
       throw new Error(`Error downloading file: ${fileError.message}`);
     }
+
+    console.log(`[${document.id}] File downloaded successfully, size: ${fileData.length} bytes`);
 
     // Convert file to FormData for OpenAI Files API
     const formData = new FormData();
@@ -103,6 +124,7 @@ async function processDocument(supabaseAdmin: any, document: any) {
     formData.append('file', new File([fileData], document.filename, { type: 'application/pdf' }));
 
     // Submit file to OpenAI Files API
+    console.log(`[${document.id}] Uploading file to OpenAI Files API`);
     const openAIResponse = await fetch('https://api.openai.com/v1/files', {
       method: 'POST',
       headers: {
@@ -114,13 +136,15 @@ async function processDocument(supabaseAdmin: any, document: any) {
     const openAIData = await openAIResponse.json();
 
     if (!openAIResponse.ok) {
+      console.error(`[${document.id}] OpenAI API error:`, openAIData);
       throw new Error(`OpenAI API error: ${JSON.stringify(openAIData)}`);
     }
 
     uploadedFileId = openAIData.id;
-    console.log(`OpenAI file uploaded: ${uploadedFileId}`);
+    console.log(`[${document.id}] OpenAI file uploaded successfully: ${uploadedFileId}`);
 
     // Update document record with OpenAI file ID
+    console.log(`[${document.id}] Updating document record in Supabase`);
     const { error: updateError } = await supabaseAdmin
       .from('documents')
       .update({
@@ -131,9 +155,11 @@ async function processDocument(supabaseAdmin: any, document: any) {
       .eq('id', document.id);
 
     if (updateError) {
+      console.error(`[${document.id}] Error updating document:`, updateError);
       throw new Error(`Error updating document: ${updateError.message}`);
     }
 
+    console.log(`[${document.id}] Document processing completed successfully`);
     return {
       documentId: document.id,
       filename: document.filename,
@@ -141,14 +167,16 @@ async function processDocument(supabaseAdmin: any, document: any) {
       status: 'processed'
     };
   } catch (error) {
-    console.error(`Error processing document ${document.id}:`, error);
+    console.error(`[${document.id}] Error processing document:`, error);
 
     // Clean up the file if it was uploaded but processing failed
     if (uploadedFileId) {
+      console.log(`[${document.id}] Cleaning up uploaded file: ${uploadedFileId}`);
       await cleanupFile(uploadedFileId);
     }
 
     // Update document status to error
+    console.log(`[${document.id}] Updating document status to error`);
     await supabaseAdmin
       .from('documents')
       .update({
@@ -169,6 +197,7 @@ async function processDocument(supabaseAdmin: any, document: any) {
 
 async function cleanupFile(fileId: string) {
   try {
+    console.log(`[cleanup] Attempting to delete file: ${fileId}`);
     const response = await fetch(`https://api.openai.com/v1/files/${fileId}`, {
       method: 'DELETE',
       headers: {
@@ -177,21 +206,22 @@ async function cleanupFile(fileId: string) {
     });
 
     if (!response.ok) {
-      console.error(`Failed to delete file ${fileId}:`, await response.text());
+      const errorText = await response.text();
+      console.error(`[cleanup] Failed to delete file ${fileId}:`, errorText);
     } else {
-      console.log(`Successfully deleted file ${fileId}`);
+      console.log(`[cleanup] Successfully deleted file ${fileId}`);
     }
   } catch (error) {
-    console.error(`Error deleting file ${fileId}:`, error);
+    console.error(`[cleanup] Error deleting file ${fileId}:`, error);
   }
 }
 
 async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: string, party: string) {
   try {
-    console.log(`Analyzing document ${documentId} with file ID ${fileId} for party: ${party}`);
+    console.log(`[${documentId}] Starting document analysis for party: ${party}`);
     
     // Create the analysis prompt using the party information
-    console.log(`Sending request to OpenAI API for document analysis`);
+    console.log(`[${documentId}] Sending request to OpenAI API for document analysis`);
     const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -218,41 +248,41 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
       })
     });
 
-    console.log(`OpenAI API response received with status: ${openAIResponse.status}`);
+    console.log(`[${documentId}] OpenAI API response received with status: ${openAIResponse.status}`);
     const analysisData = await openAIResponse.json();
     
     if (!openAIResponse.ok) {
-      console.error(`OpenAI API error details:`, JSON.stringify(analysisData));
+      console.error(`[${documentId}] OpenAI API error details:`, JSON.stringify(analysisData));
       throw new Error(`OpenAI Analysis API error: ${JSON.stringify(analysisData)}`);
     }
     
     const analysisContent = analysisData.choices[0].message.content;
-    console.log(`Analysis complete for document ${documentId}, processing response`);
-    console.log(`Raw analysis response:`, analysisContent.substring(0, 200) + '...');
+    console.log(`[${documentId}] Analysis complete, processing response`);
+    console.log(`[${documentId}] Raw analysis response preview:`, analysisContent.substring(0, 200) + '...');
     
     let obligationsJson;
     
     try {
       // Try to parse the response as JSON
-      console.log(`Attempting to parse OpenAI response as JSON`);
+      console.log(`[${documentId}] Attempting to parse OpenAI response as JSON`);
       obligationsJson = JSON.parse(analysisContent);
-      console.log(`Successfully parsed JSON. Found ${Array.isArray(obligationsJson) ? obligationsJson.length : 'unknown'} obligations`);
+      console.log(`[${documentId}] Successfully parsed JSON. Found ${Array.isArray(obligationsJson) ? obligationsJson.length : 'unknown'} obligations`);
       
       // Validate the structure is as expected
       if (Array.isArray(obligationsJson)) {
-        console.log(`Obligation array example:`, JSON.stringify(obligationsJson[0] || {}));
+        console.log(`[${documentId}] Obligation array example:`, JSON.stringify(obligationsJson[0] || {}));
       } else {
-        console.log(`WARNING: Obligations not in expected array format:`, typeof obligationsJson);
+        console.log(`[${documentId}] WARNING: Obligations not in expected array format:`, typeof obligationsJson);
       }
     } catch (e) {
-      console.error("Failed to parse OpenAI response as JSON:", e);
-      console.error("Response content:", analysisContent.substring(0, 500) + (analysisContent.length > 500 ? '...' : ''));
+      console.error(`[${documentId}] Failed to parse OpenAI response as JSON:`, e);
+      console.error(`[${documentId}] Response content preview:`, analysisContent.substring(0, 500) + (analysisContent.length > 500 ? '...' : ''));
       // If parsing fails, store the raw text
       obligationsJson = { raw_response: analysisContent };
     }
     
     // Update the document with the analysis results
-    console.log(`Updating document ${documentId} with analysis results in Supabase`);
+    console.log(`[${documentId}] Updating document with analysis results in Supabase`);
     const { error: updateError } = await supabaseAdmin
       .from('documents')
       .update({
@@ -263,23 +293,25 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
       .eq('id', documentId);
     
     if (updateError) {
-      console.error(`Error updating document with analysis:`, updateError);
+      console.error(`[${documentId}] Error updating document with analysis:`, updateError);
       throw new Error(`Error updating document with analysis: ${updateError.message}`);
     }
     
     // Clean up the file after successful analysis
+    console.log(`[${documentId}] Cleaning up file after successful analysis`);
     await cleanupFile(fileId);
     
-    console.log(`Successfully updated document ${documentId} with analysis results`);
+    console.log(`[${documentId}] Document analysis completed successfully`);
     return {
       documentId,
       status: 'analyzed',
       obligationsCount: Array.isArray(obligationsJson) ? obligationsJson.length : null
     };
   } catch (error) {
-    console.error(`Error analyzing document ${documentId}:`, error);
+    console.error(`[${documentId}] Error analyzing document:`, error);
     
     // Update document status to analysis_error
+    console.log(`[${documentId}] Updating document status to analysis_error`);
     await supabaseAdmin
       .from('documents')
       .update({
@@ -290,6 +322,7 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
       .eq('id', documentId);
     
     // Clean up the file even if analysis failed
+    console.log(`[${documentId}] Cleaning up file after analysis error`);
     await cleanupFile(fileId);
     
     return {

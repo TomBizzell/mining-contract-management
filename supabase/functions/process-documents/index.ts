@@ -63,8 +63,8 @@ serve(async (req) => {
       const result = await processDocument(supabaseAdmin, doc);
       
       // After uploading to OpenAI Files API, analyze the document
-      if (result.status === 'processed' && result.openai_file_id) {
-        await analyzeDocument(supabaseAdmin, result.documentId, result.openai_file_id, doc.party);
+      if (result.status === 'processed' && result.file_data) {
+        await analyzeDocument(supabaseAdmin, result.documentId, result.file_data, doc.party);
       }
       
       results.push(result);
@@ -96,34 +96,16 @@ async function processDocument(supabaseAdmin: any, document: any) {
       throw new Error(`Error downloading file: ${fileError.message}`);
     }
 
-    // Convert file to FormData for OpenAI API
-    const formData = new FormData();
-    formData.append('purpose', 'assistants');
-    formData.append('file', new File([fileData], document.filename, { type: 'application/pdf' }));
+    // Convert file to base64
+    const base64String = btoa(String.fromCharCode(...new Uint8Array(fileData)));
+    const base64Data = `data:application/pdf;base64,${base64String}`;
 
-    // Submit file to OpenAI API
-    const openAIResponse = await fetch('https://api.openai.com/v1/files', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: formData,
-    });
-
-    const openAIData = await openAIResponse.json();
-
-    if (!openAIResponse.ok) {
-      throw new Error(`OpenAI API error: ${JSON.stringify(openAIData)}`);
-    }
-
-    console.log(`OpenAI file uploaded: ${openAIData.id}`);
-
-    // Update document record with OpenAI file ID
+    // Update document record with base64 data
     const { error: updateError } = await supabaseAdmin
       .from('documents')
       .update({
-        openai_file_id: openAIData.id,
-        status: 'processing', // Change status to processing before analysis
+        file_data: base64Data,
+        status: 'processing',
         updated_at: new Date().toISOString(),
       })
       .eq('id', document.id);
@@ -135,7 +117,7 @@ async function processDocument(supabaseAdmin: any, document: any) {
     return {
       documentId: document.id,
       filename: document.filename,
-      openai_file_id: openAIData.id,
+      file_data: base64Data,
       status: 'processed'
     };
   } catch (error) {
@@ -160,9 +142,9 @@ async function processDocument(supabaseAdmin: any, document: any) {
   }
 }
 
-async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: string, party: string) {
+async function analyzeDocument(supabaseAdmin: any, documentId: string, fileData: string, party: string) {
   try {
-    console.log(`Analyzing document ${documentId} with file ID ${fileId} for party: ${party}`);
+    console.log(`Analyzing document ${documentId} for party: ${party}`);
     
     // Create the analysis prompt using the party information
     console.log(`Sending request to OpenAI API for document analysis`);
@@ -179,11 +161,12 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
             role: 'user',
             content: [
               {
-                type: 'input_file',
-                file_id: fileId
+                type: 'file',
+                filename: 'contract.pdf',
+                file_data: fileData
               },
               {
-                type: 'input_text',
+                type: 'text',
                 text: `You are a contract manager for ${party}. Extract the key obligations that ${party} has under the contract. If an obligation is time-based, the due date should be extracted too. This should be output strictly and entirely as json with each obligation, the section of the contract and it's due date (if any) identified.`
               }
             ]

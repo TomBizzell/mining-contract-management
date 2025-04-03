@@ -63,7 +63,6 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesAdded, files, setFiles }) =>
   }, [onFilesAdded, toast]);
 
   const handleBrowseClick = () => {
-    // Ensure we're clicking the file input element properly
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
@@ -97,9 +96,10 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesAdded, files, setFiles }) =>
             <input
               ref={fileInputRef}
               id="file-upload"
+              name="file-upload"
               type="file"
               className="sr-only"
-              multiple
+              multiple={true}
               accept=".pdf"
               onChange={handleFileInput}
             />

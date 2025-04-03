@@ -63,33 +63,32 @@ const ObligationsPage: React.FC = () => {
         
         const { data, error } = await supabase
           .from('documents')
-          .select('*, analysis_results')
+          .select('id, filename, party, status, created_at, analysis_results')
           .eq('user_id', user.id)
           .eq('status', 'analyzed')
           .order('created_at', { ascending: false });
           
         if (error) {
+          console.error('Database error:', error);
           throw error;
         }
         
-        // Make sure to properly cast the data to match our expected type
-        const typedData = data?.map(doc => ({
-          id: doc.id,
-          filename: doc.filename,
-          party: doc.party,
-          status: doc.status,
-          created_at: doc.created_at,
-          analysis_results: doc.analysis_results as Obligation[] | null
-        })) as ContractObligations[];
-        
-        setContracts(typedData || []);
-      } catch (error) {
+        // Make sure data is not null before proceeding
+        if (data) {
+          // Type cast to ensure TS understands this data structure
+          const typedData = data as unknown as ContractObligations[];
+          setContracts(typedData);
+        } else {
+          setContracts([]);
+        }
+      } catch (error: any) {
         console.error('Error fetching contracts:', error);
         toast({
           title: "Error",
-          description: "Failed to load obligations data.",
+          description: "Failed to load obligations data: " + error.message,
           variant: "destructive",
         });
+        setContracts([]);
       } finally {
         setIsLoading(false);
       }
@@ -167,7 +166,7 @@ const ObligationsPage: React.FC = () => {
                       </div>
                     ) : (
                       <Accordion type="single" collapsible className="w-full">
-                        {Array.isArray(contract.analysis_results) && contract.analysis_results.map((obligation, index) => (
+                        {contract.analysis_results.map((obligation, index) => (
                           <AccordionItem key={index} value={`item-${index}`}>
                             <AccordionTrigger className="hover:bg-gray-50 px-4 py-3 rounded-md">
                               <div className="text-left">

@@ -84,6 +84,7 @@ serve(async (req) => {
 });
 
 async function processDocument(supabaseAdmin: any, document: any) {
+  let uploadedFileId: string | null = null;
   try {
     console.log(`Processing document: ${document.filename}`);
 
@@ -98,7 +99,7 @@ async function processDocument(supabaseAdmin: any, document: any) {
 
     // Convert file to FormData for OpenAI Files API
     const formData = new FormData();
-    formData.append('purpose', 'assistants');
+    formData.append('purpose', 'user_data');
     formData.append('file', new File([fileData], document.filename, { type: 'application/pdf' }));
 
     // Submit file to OpenAI Files API
@@ -116,13 +117,14 @@ async function processDocument(supabaseAdmin: any, document: any) {
       throw new Error(`OpenAI API error: ${JSON.stringify(openAIData)}`);
     }
 
-    console.log(`OpenAI file uploaded: ${openAIData.id}`);
+    uploadedFileId = openAIData.id;
+    console.log(`OpenAI file uploaded: ${uploadedFileId}`);
 
     // Update document record with OpenAI file ID
     const { error: updateError } = await supabaseAdmin
       .from('documents')
       .update({
-        openai_file_id: openAIData.id,
+        openai_file_id: uploadedFileId,
         status: 'processing',
         updated_at: new Date().toISOString(),
       })
@@ -135,11 +137,16 @@ async function processDocument(supabaseAdmin: any, document: any) {
     return {
       documentId: document.id,
       filename: document.filename,
-      openai_file_id: openAIData.id,
+      openai_file_id: uploadedFileId,
       status: 'processed'
     };
   } catch (error) {
     console.error(`Error processing document ${document.id}:`, error);
+
+    // Clean up the file if it was uploaded but processing failed
+    if (uploadedFileId) {
+      await cleanupFile(uploadedFileId);
+    }
 
     // Update document status to error
     await supabaseAdmin
@@ -157,6 +164,25 @@ async function processDocument(supabaseAdmin: any, document: any) {
       status: 'error',
       error: error.message
     };
+  }
+}
+
+async function cleanupFile(fileId: string) {
+  try {
+    const response = await fetch(`https://api.openai.com/v1/files/${fileId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`Failed to delete file ${fileId}:`, await response.text());
+    } else {
+      console.log(`Successfully deleted file ${fileId}`);
+    }
+  } catch (error) {
+    console.error(`Error deleting file ${fileId}:`, error);
   }
 }
 
@@ -241,6 +267,9 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
       throw new Error(`Error updating document with analysis: ${updateError.message}`);
     }
     
+    // Clean up the file after successful analysis
+    await cleanupFile(fileId);
+    
     console.log(`Successfully updated document ${documentId} with analysis results`);
     return {
       documentId,
@@ -259,6 +288,9 @@ async function analyzeDocument(supabaseAdmin: any, documentId: string, fileId: s
         updated_at: new Date().toISOString(),
       })
       .eq('id', documentId);
+    
+    // Clean up the file even if analysis failed
+    await cleanupFile(fileId);
     
     return {
       documentId,

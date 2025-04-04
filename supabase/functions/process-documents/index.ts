@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.3.0/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
@@ -235,95 +234,43 @@ async function analyzeDocument(supabaseAdmin, documentId, openai_file_id, party)
     console.log(`[${documentId}] Starting document analysis with OpenAI`);
     
     // Call OpenAI API to analyze the document
-    const analysisResponse = await fetch('https://api.openai.com/v1/threads/runs', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'OpenAI-Beta': 'assistants=v1'
       },
       body: JSON.stringify({
-        assistant_id: "asst_abc123", // Replace with your Assistant ID
-        thread: {
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: `You are a contract manager for ${party}. Extract the key obligations that ${party} has under the contract. If an obligation is time-based, the due date should be extracted too. Output ONLY a JSON array with each obligation containing 'obligation', 'section', and 'dueDate' fields.`
-                },
-                {
-                  type: "file_attachment",
-                  file_id: openai_file_id
-                }
-              ]
-            }
-          ]
-        }
+        model: "gpt-4-turbo-preview",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "file",
+                file_id: openai_file_id
+              },
+              {
+                type: "text",
+                text: `You are a contract manager for ${party}. Extract the key obligations that ${party} has under the contract. If an obligation is time-based, the due date should be extracted too. Output ONLY a JSON array with each obligation containing 'obligation', 'section', and 'dueDate' fields.`
+              }
+            ]
+          }
+        ]
       })
     });
 
-    if (!analysisResponse.ok) {
-      const errorData = await analysisResponse.json();
+    if (!response.ok) {
+      const errorData = await response.json();
       throw new Error(`OpenAI API error: ${JSON.stringify(errorData)}`);
     }
 
-    const analysisData = await analysisResponse.json();
-    console.log(`[${documentId}] Analysis submitted to OpenAI, run ID: ${analysisData.id}`);
-    
-    // Wait for the run to complete and get results
-    let runStatus = 'queued';
-    let runResult = null;
-    
-    while (['queued', 'in_progress'].includes(runStatus)) {
-      // Wait before checking status again
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const statusResponse = await fetch(`https://api.openai.com/v1/threads/runs/${analysisData.id}`, {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'OpenAI-Beta': 'assistants=v1'
-        }
-      });
-      
-      if (!statusResponse.ok) {
-        const errorData = await statusResponse.json();
-        throw new Error(`Error checking run status: ${JSON.stringify(errorData)}`);
-      }
-      
-      const statusData = await statusResponse.json();
-      runStatus = statusData.status;
-      console.log(`[${documentId}] Current run status: ${runStatus}`);
-      
-      if (runStatus === 'completed') {
-        // Get the messages from the thread
-        const messagesResponse = await fetch(`https://api.openai.com/v1/threads/${analysisData.thread_id}/messages`, {
-          headers: {
-            'Authorization': `Bearer ${OPENAI_API_KEY}`,
-            'OpenAI-Beta': 'assistants=v1'
-          }
-        });
-        
-        if (!messagesResponse.ok) {
-          const errorData = await messagesResponse.json();
-          throw new Error(`Error fetching messages: ${JSON.stringify(errorData)}`);
-        }
-        
-        const messagesData = await messagesResponse.json();
-        // Get the first assistant message
-        const assistantMessage = messagesData.data.find(msg => msg.role === 'assistant');
-        
-        if (assistantMessage) {
-          runResult = assistantMessage.content[0].text.value;
-        }
-      } else if (['failed', 'cancelled', 'expired'].includes(runStatus)) {
-        throw new Error(`Run ended with status: ${runStatus}`);
-      }
-    }
+    const responseData = await response.json();
+    console.log(`[${documentId}] Received response from OpenAI`);
     
     // Process the results
     let obligations = [];
+    const runResult = responseData.choices[0].message.content;
     
     if (runResult) {
       try {

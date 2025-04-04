@@ -218,7 +218,7 @@ async function analyzeDocument(supabaseAdmin, documentId, openai_file_id, party)
       },
       body: JSON.stringify({
         model: "gpt-4o",
-        messages: [
+        input: [
           {
             role: "user",
             content: [

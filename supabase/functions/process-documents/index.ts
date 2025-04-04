@@ -243,34 +243,62 @@ async function analyzeDocument(supabaseAdmin, documentId, openai_file_id, party)
     console.log(`[${documentId}] Received response from OpenAI`);
     // Process the results
     let obligations = [];
-    const runResult = responseData.choices[0].message.content;
-    if (runResult) {
-      try {
-        // Try to parse the JSON data from the response
-        // Extract just the JSON part if there's additional text
-        const jsonMatch = runResult.match(/\[.*\]/s);
-        if (jsonMatch) {
-          obligations = JSON.parse(jsonMatch[0]);
-        } else {
-          // If no JSON array found, store the raw response
+
+    console.log(`[${documentId}] Processing OpenAI response:`, JSON.stringify(responseData).substring(0, 200) + '...');
+    
+    if (responseData && Array.isArray(responseData) && responseData.length > 0 && responseData[0].content) {
+      // Find output_text content
+      const outputText = responseData[0].content.find(item => item.type === 'output_text');
+      if (outputText && outputText.text) {
+        const runResult = outputText.text;
+        
+        console.log(`[${documentId}] Output text from response: ${runResult.substring(0, 200)}...`);
+        
+        try {
+          // Try to parse the JSON data from the response
+          // Extract just the JSON part if there's additional text
+          const jsonMatch = runResult.match(/\[.*\]/s);
+          if (jsonMatch) {
+            obligations = JSON.parse(jsonMatch[0]);
+          } else {
+            // If no JSON array found, store the raw response
+            obligations = [
+              {
+                obligation: "Raw AI response (parsing failed)",
+                section: "N/A",
+                raw_response: runResult
+              }
+            ];
+          }
+        } catch (parseError) {
+          console.error(`[${documentId}] Error parsing analysis results:`, parseError);
           obligations = [
             {
-              obligation: "Raw AI response (parsing failed)",
+              obligation: "Error parsing AI response",
               section: "N/A",
               raw_response: runResult
             }
           ];
         }
-      } catch (parseError) {
-        console.error(`[${documentId}] Error parsing analysis results:`, parseError);
+      } else {
+        console.error(`[${documentId}] No output_text found in response`);
         obligations = [
           {
-            obligation: "Error parsing AI response",
+            obligation: "No output text in response",
             section: "N/A",
-            raw_response: runResult
+            raw_response: JSON.stringify(responseData)
           }
         ];
       }
+    } else {
+      console.error(`[${documentId}] Unexpected response format:`, responseData);
+      obligations = [
+        {
+          obligation: "Unexpected response format",
+          section: "N/A",
+          raw_response: JSON.stringify(responseData)
+        }
+      ];
     }
     // Update document with analysis results
     console.log(`[${documentId}] Updating document with analysis results`);

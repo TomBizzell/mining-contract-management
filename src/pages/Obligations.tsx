@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, Clock, FileText, AlertCircle, Tag, BookOpen, Table } from 'lucide-react';
+import { Calendar, Clock, FileText, AlertCircle, Tag, BookOpen, Table, Download } from 'lucide-react';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -64,6 +65,8 @@ const ObligationsPage: React.FC = () => {
   const [isPolling, setIsPolling] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [documentUrl, setDocumentUrl] = useState<string | null>(null);
 
   // Redirect to auth page if not logged in
   useEffect(() => {
@@ -249,6 +252,57 @@ const ObligationsPage: React.FC = () => {
     }
   }, [user, fetchContracts]);
   
+  // Export obligations to webhook
+  const exportObligations = async () => {
+    if (!user || consolidatedObligations.length === 0) return;
+    
+    try {
+      setIsExporting(true);
+      setDocumentUrl(null);
+      
+      console.log("Exporting obligations to webhook");
+      
+      const { data, error } = await supabase.functions.invoke('export-obligations', {
+        body: {
+          obligations: consolidatedObligations,
+          userId: user.id
+        }
+      });
+      
+      if (error) {
+        throw new Error(`Error exporting obligations: ${error.message}`);
+      }
+      
+      console.log("Export response:", data);
+      
+      if (data?.success && data.documentUrl) {
+        setDocumentUrl(data.documentUrl);
+        toast({
+          title: "Export successful",
+          description: "Your obligation register has been exported. Click the button to download.",
+        });
+      } else {
+        throw new Error("Export failed: No document URL returned");
+      }
+    } catch (error: any) {
+      console.error("Export error:", error);
+      toast({
+        title: "Export failed",
+        description: error.message || "An unexpected error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+  
+  // Open the document URL in a new tab
+  const openDocumentUrl = () => {
+    if (documentUrl) {
+      window.open(documentUrl, '_blank');
+    }
+  };
+  
   // Add debug mode
   const [showDebug, setShowDebug] = useState(false);
   
@@ -432,8 +486,31 @@ const ObligationsPage: React.FC = () => {
                   <TabsContent value="consolidated">
                     <Card>
                       <CardHeader>
-                        <CardTitle className="text-xl text-px4-navy">
-                          Consolidated Obligation Register
+                        <CardTitle className="text-xl text-px4-navy flex justify-between items-center">
+                          <span>Consolidated Obligation Register</span>
+                          <div className="flex gap-2">
+                            <Button
+                              onClick={exportObligations}
+                              disabled={isExporting || consolidatedObligations.length === 0}
+                              className="bg-green-600 hover:bg-green-700 text-white"
+                              size="sm"
+                            >
+                              {isExporting ? (
+                                <><div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></div> Exporting</>
+                              ) : (
+                                <>Export</>
+                              )}
+                            </Button>
+                            {documentUrl && (
+                              <Button
+                                onClick={openDocumentUrl}
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                                size="sm"
+                              >
+                                <Download className="h-4 w-4 mr-1" /> Download
+                              </Button>
+                            )}
+                          </div>
                         </CardTitle>
                         <CardDescription>
                           Showing all obligations from your contracts, ordered by due date
@@ -566,6 +643,16 @@ const ObligationsPage: React.FC = () => {
                   <pre className="bg-white p-2 rounded text-xs">{isPolling ? 'Yes' : 'No'}</pre>
                 </div>
                 
+                <div>
+                  <h4 className="font-medium">Export Status:</h4>
+                  <pre className="bg-white p-2 rounded text-xs">{isExporting ? 'Exporting...' : 'Idle'}</pre>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium">Document URL:</h4>
+                  <pre className="bg-white p-2 rounded text-xs">{documentUrl || 'None'}</pre>
+                </div>
+                
                 <Button 
                   variant="default"
                   size="sm"
@@ -614,7 +701,7 @@ const SingleContractCard: React.FC<{
         // Ensure all fields have expected types
         obligation: String(item.obligation),
         section: typeof item.section === 'string' ? item.section : 'N/A',
-        dueDate: isValidDate(item.dueDate) ? item.dueDate : null
+        dueDate: item.dueDate ? item.dueDate : null
       }));
   }
   
@@ -647,7 +734,7 @@ const SingleContractCard: React.FC<{
                   <div className="text-left w-full">
                     <div className="flex justify-between items-start w-full pr-4">
                       <span className="font-medium">{obligation.obligation.substring(0, 80)}{obligation.obligation.length > 80 ? '...' : ''}</span>
-                      {isValidDate(obligation.dueDate) && (
+                      {obligation.dueDate && (
                         <Badge className="ml-2 bg-blue-50 text-blue-700 border-blue-200 whitespace-nowrap">
                           Due: {formatDate(obligation.dueDate)}
                         </Badge>
@@ -667,7 +754,7 @@ const SingleContractCard: React.FC<{
                         </div>
                       )}
                       
-                      {isValidDate(obligation.dueDate) && (
+                      {obligation.dueDate && (
                         <div className="flex items-center text-sm text-gray-500">
                           <Clock className="h-3.5 w-3.5 mr-1" />
                           <span>Due date: {formatDate(obligation.dueDate)}</span>

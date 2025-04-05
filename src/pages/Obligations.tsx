@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -116,7 +115,7 @@ const ObligationsPage: React.FC = () => {
       console.log("Raw documents data:", data);
       
       // Count documents by status
-      const statuses = data.reduce((acc, doc) => {
+      const statuses = data.reduce((acc: Record<string, number>, doc: any) => {
         const status = doc.status || 'unknown';
         acc[status] = (acc[status] || 0) + 1;
         return acc;
@@ -124,7 +123,7 @@ const ObligationsPage: React.FC = () => {
       console.log("Document status counts:", statuses);
       
       // Simple filtering for pending documents (don't do complex filtering yet)
-      const pendingDocs = data.filter(doc => 
+      const pendingDocs = data.filter((doc: any) => 
         doc.status === 'pending' || doc.status === 'processing'
       );
       
@@ -140,14 +139,23 @@ const ObligationsPage: React.FC = () => {
       }
       
       // Now filter for analyzed documents
-      const analyzedDocs = data.filter(doc => doc.status === 'analyzed');
+      const analyzedDocs = data.filter((doc: any) => doc.status === 'analyzed');
       console.log("Analyzed documents:", analyzedDocs);
       
       // Check if each analyzed doc has analysis_results
-      analyzedDocs.forEach(doc => {
+      analyzedDocs.forEach((doc: any) => {
         console.log(`Doc ${doc.id} analysis_results:`, doc.analysis_results);
         if (!doc.analysis_results) {
           console.warn(`Document ${doc.id} has status 'analyzed' but no analysis_results`);
+        } else if (typeof doc.analysis_results === 'string') {
+          // If it's a string, try to parse JSON
+          try {
+            const parsed = JSON.parse(doc.analysis_results);
+            console.log(`Parsed analysis_results for ${doc.id}:`, parsed);
+            doc.analysis_results = parsed;
+          } catch (e) {
+            console.warn(`Document ${doc.id} has analysis_results but it's not valid JSON:`, e);
+          }
         } else if (!Array.isArray(doc.analysis_results)) {
           console.warn(`Document ${doc.id} has analysis_results but it's not an array:`, 
             typeof doc.analysis_results);
@@ -155,21 +163,46 @@ const ObligationsPage: React.FC = () => {
       });
       
       // Filter to only the properly analyzed documents
-      const validAnalyzedDocs = analyzedDocs.filter(doc => 
-        doc.analysis_results && Array.isArray(doc.analysis_results)
-      );
+      const validAnalyzedDocs = analyzedDocs.filter((doc: any) => {
+        // Ensure analysis_results is an array (parsed from JSON if needed)
+        if (typeof doc.analysis_results === 'string') {
+          try {
+            doc.analysis_results = JSON.parse(doc.analysis_results);
+          } catch (e) {
+            console.error(`Error parsing analysis_results for ${doc.id}:`, e);
+            return false;
+          }
+        }
+        
+        return doc.analysis_results && Array.isArray(doc.analysis_results);
+      });
       
       console.log("Valid analyzed documents:", validAnalyzedDocs);
       
+      // Convert to our type
+      const typedContracts: ContractObligations[] = validAnalyzedDocs.map((doc: any) => ({
+        id: doc.id,
+        filename: doc.filename,
+        party: doc.party,
+        status: doc.status,
+        created_at: doc.created_at,
+        updated_at: doc.updated_at,
+        analysis_results: Array.isArray(doc.analysis_results) 
+          ? doc.analysis_results 
+          : typeof doc.analysis_results === 'string'
+            ? JSON.parse(doc.analysis_results)
+            : null
+      }));
+      
       // Update state with valid analyzed documents
-      setContracts(validAnalyzedDocs);
+      setContracts(typedContracts);
       
       // Handle consolidated view logic only if we have valid documents
-      if (validAnalyzedDocs.length > 1) {
+      if (typedContracts.length > 1) {
         // Simplified consolidated logic
         const allObligations: ConsolidatedObligation[] = [];
         
-        validAnalyzedDocs.forEach(contract => {
+        typedContracts.forEach(contract => {
           if (contract.analysis_results && Array.isArray(contract.analysis_results)) {
             contract.analysis_results.forEach(obligation => {
               try {

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -43,8 +44,9 @@ interface Document {
   created_at: string;
   updated_at?: string;
   openai_file_id?: string | null;
-  analysis_results?: any[] | null;
+  analysis_results?: any | null;
   error?: string | null;
+  file_data?: string | null;
 }
 
 const DocumentsPage: React.FC = () => {
@@ -91,10 +93,30 @@ const DocumentsPage: React.FC = () => {
       console.log("Received documents from database:", data);
       
       if (data) {
-        setDocuments(data);
+        // Convert the data to match our Document type
+        const typedDocuments: Document[] = data.map(doc => ({
+          ...doc,
+          id: doc.id,
+          user_id: doc.user_id,
+          filename: doc.filename,
+          file_path: doc.file_path,
+          file_size: doc.file_size,
+          party: doc.party,
+          status: doc.status,
+          created_at: doc.created_at,
+          updated_at: doc.updated_at,
+          openai_file_id: doc.openai_file_id,
+          // Parse JSON string to object if needed
+          analysis_results: typeof doc.analysis_results === 'string' 
+            ? JSON.parse(doc.analysis_results) 
+            : doc.analysis_results,
+          file_data: doc.file_data
+        }));
+        
+        setDocuments(typedDocuments);
         
         // Check if there are any pending or processing documents
-        const hasPendingDocuments = data.some(doc => 
+        const hasPendingDocuments = typedDocuments.some(doc => 
           doc.status === 'pending' || doc.status === 'processing'
         );
         

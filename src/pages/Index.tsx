@@ -122,7 +122,7 @@ const Index: React.FC = () => {
           <div className="max-w-5xl mx-auto px-4 sm:px-6 text-center">
             <h2 className="text-3xl font-bold text-white mb-6">Ready to Streamline Your Contract Management?</h2>
             <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
-              Join hundreds of legal professionals who save time and reduce risk with PX4 Obligation Manager.
+              Join hundreds of legal professionals who save time and reduce risk with Mining Obligation Manager.
             </p>
             {user ? (
               <div className="flex flex-col sm:flex-row justify-center gap-4">

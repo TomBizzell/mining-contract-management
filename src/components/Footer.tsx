@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 
@@ -9,7 +8,7 @@ const Footer: React.FC = () => {
         <div className="flex flex-col md:flex-row justify-between">
           <div className="mb-6 md:mb-0">
             <h2 className="text-xl font-bold">
-              PX4 <span className="text-px4-teal">Obligation Manager</span>
+              Mining <span className="text-px4-teal">Obligation Manager</span>
             </h2>
             <p className="mt-2 text-gray-300 max-w-xs">
               Simplify contract obligation management with AI-powered analysis
@@ -47,7 +46,7 @@ const Footer: React.FC = () => {
               <ul className="mt-4 space-y-2">
                 <li>
                   <span className="text-gray-300">
-                    &copy; {new Date().getFullYear()} PX4 Obligation Manager
+                    &copy; {new Date().getFullYear()} Mining Obligation Manager
                   </span>
                 </li>
               </ul>

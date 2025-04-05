@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -88,7 +87,7 @@ const Auth = () => {
           <Card className="bg-white shadow-sm">
             <CardHeader className="space-y-1">
               <CardTitle className="text-2xl font-bold text-center text-px4-navy">
-                Welcome to PX4 Obligation Manager
+                Welcome to Mining Obligation Manager
               </CardTitle>
               <CardDescription className="text-center">
                 Sign in or create an account to manage your contract obligations

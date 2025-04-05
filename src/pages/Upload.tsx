@@ -203,12 +203,18 @@ const Upload: React.FC = () => {
       
       toast({
         title: "Upload successful",
-        description: "Your contracts have been uploaded and are being processed.",
+        description: "Your contracts have been uploaded and are being processed. You'll be redirected to view your obligations shortly.",
       });
       
       // Reset form
       setFiles([]);
       setParty('');
+      
+      // Redirect to the obligations page after a short delay
+      // This gives the user time to read the toast message
+      setTimeout(() => {
+        navigate('/obligations');
+      }, 2000);
     }
     
     setIsLoading(false);

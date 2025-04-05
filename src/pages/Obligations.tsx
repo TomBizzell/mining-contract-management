@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
 import { useAuth } from '@/components/AuthContext';
@@ -59,6 +59,8 @@ const ObligationsPage: React.FC = () => {
   const [showConsolidated, setShowConsolidated] = useState(false);
   const [consolidatedObligations, setConsolidatedObligations] = useState<ConsolidatedObligation[]>([]);
   const [lastUploadDate, setLastUploadDate] = useState<string | null>(null);
+  const [pendingDocuments, setPendingDocuments] = useState<number>(0);
+  const [isPolling, setIsPolling] = useState<boolean>(false);
   const { toast } = useToast();
 
   // Redirect to auth page if not logged in
@@ -73,96 +75,150 @@ const ObligationsPage: React.FC = () => {
     }
   }, [user, loading, navigate, toast]);
 
-  // Fetch all analyzed contracts for the user
-  useEffect(() => {
-    const fetchContracts = async () => {
-      if (!user) return;
+  // Fetch analyzed and pending contracts
+  const fetchContracts = useCallback(async () => {
+    if (!user) return;
+    
+    try {
+      setIsLoading(true);
       
-      try {
-        setIsLoading(true);
+      // Fetch analyzed documents
+      const { data: analyzedData, error: analyzedError } = await supabase
+        .from('documents')
+        .select('id, filename, party, status, created_at, updated_at, analysis_results')
+        .eq('user_id', user.id)
+        .eq('status', 'analyzed')
+        .order('updated_at', { ascending: false });
         
-        const { data, error } = await supabase
-          .from('documents')
-          .select('id, filename, party, status, created_at, updated_at, analysis_results')
-          .eq('user_id', user.id)
-          .eq('status', 'analyzed')
-          .order('updated_at', { ascending: false });
-          
-        if (error) {
-          console.error('Database error:', error);
-          throw error;
-        }
+      if (analyzedError) {
+        console.error('Database error:', analyzedError);
+        throw analyzedError;
+      }
+      
+      // Fetch pending and processing documents
+      const { data: pendingData, error: pendingError } = await supabase
+        .from('documents')
+        .select('id, status')
+        .eq('user_id', user.id)
+        .in('status', ['pending', 'processing'])
         
-        // Make sure data is not null before proceeding
-        if (data && data.length > 0) {
-          // Type cast to ensure TS understands this data structure
-          const typedData = data as unknown as ContractObligations[];
-          setContracts(typedData);
+      if (pendingError) {
+        console.error('Database error:', pendingError);
+        throw pendingError;
+      }
+      
+      // Update pending documents count
+      const pendingCount = pendingData?.length || 0;
+      setPendingDocuments(pendingCount);
+      
+      // If we have pending documents, start polling
+      if (pendingCount > 0 && !isPolling) {
+        setIsPolling(true);
+      } else if (pendingCount === 0) {
+        setIsPolling(false);
+      }
+      
+      // Make sure data is not null before proceeding with analyzed documents
+      if (analyzedData && analyzedData.length > 0) {
+        // Type cast to ensure TS understands this data structure
+        const typedData = analyzedData as unknown as ContractObligations[];
+        setContracts(typedData);
+        
+        // Determine if contracts were uploaded/processed together
+        // by checking their updated_at timestamps
+        if (typedData.length > 1) {
+          // Set the most recent upload date as reference
+          setLastUploadDate(typedData[0].updated_at || typedData[0].created_at);
           
-          // Determine if contracts were uploaded/processed together
-          // by checking their updated_at timestamps
-          if (typedData.length > 1) {
-            // Set the most recent upload date as reference
-            setLastUploadDate(typedData[0].updated_at || typedData[0].created_at);
-            
-            // Check if multiple contracts were uploaded in the same batch
-            const recentTime = new Date(typedData[0].updated_at || typedData[0].created_at).getTime();
-            const multipleRecentUploads = typedData.filter(contract => {
-              const contractTime = new Date(contract.updated_at || contract.created_at).getTime();
-              // Consider documents updated within 10 minutes of each other as part of the same batch
-              return Math.abs(recentTime - contractTime) < 10 * 60 * 1000;
-            }).length > 1;
-            
-            setShowConsolidated(multipleRecentUploads);
-            
-            // Create consolidated obligations list from all contracts
-            const allObligations: ConsolidatedObligation[] = [];
-            
-            typedData.forEach(contract => {
-              if (contract.analysis_results && Array.isArray(contract.analysis_results)) {
-                contract.analysis_results.forEach(obligation => {
-                  allObligations.push({
-                    ...obligation,
-                    documentId: contract.id,
-                    documentName: contract.filename
-                  });
+          // Check if multiple contracts were uploaded in the same batch
+          const recentTime = new Date(typedData[0].updated_at || typedData[0].created_at).getTime();
+          const multipleRecentUploads = typedData.filter(contract => {
+            const contractTime = new Date(contract.updated_at || contract.created_at).getTime();
+            // Consider documents updated within 10 minutes of each other as part of the same batch
+            return Math.abs(recentTime - contractTime) < 10 * 60 * 1000;
+          }).length > 1;
+          
+          setShowConsolidated(multipleRecentUploads);
+          
+          // Create consolidated obligations list from all contracts
+          const allObligations: ConsolidatedObligation[] = [];
+          
+          typedData.forEach(contract => {
+            if (contract.analysis_results && Array.isArray(contract.analysis_results)) {
+              contract.analysis_results.forEach(obligation => {
+                allObligations.push({
+                  ...obligation,
+                  documentId: contract.id,
+                  documentName: contract.filename
                 });
-              }
-            });
-            
-            // Sort by due date (nulls last)
-            const sortedObligations = allObligations.sort((a, b) => {
-              if (!a.dueDate && !b.dueDate) return 0;
-              if (!a.dueDate) return 1;
-              if (!b.dueDate) return -1;
-              return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-            });
-            
-            setConsolidatedObligations(sortedObligations);
-          } else {
-            setShowConsolidated(false);
-          }
+              });
+            }
+          });
+          
+          // Sort by due date (nulls last)
+          const sortedObligations = allObligations.sort((a, b) => {
+            if (!a.dueDate && !b.dueDate) return 0;
+            if (!a.dueDate) return 1;
+            if (!b.dueDate) return -1;
+            return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+          });
+          
+          setConsolidatedObligations(sortedObligations);
         } else {
-          setContracts([]);
           setShowConsolidated(false);
         }
-      } catch (error: any) {
-        console.error('Error fetching contracts:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load obligations data: " + error.message,
-          variant: "destructive",
-        });
+      } else {
         setContracts([]);
-      } finally {
-        setIsLoading(false);
+        setShowConsolidated(false);
       }
-    };
-    
+    } catch (error: any) {
+      console.error('Error fetching contracts:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load obligations data: " + error.message,
+        variant: "destructive",
+      });
+      setContracts([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, toast, isPolling]);
+  
+  // Initial fetch
+  useEffect(() => {
     if (user) {
       fetchContracts();
     }
-  }, [user, toast]);
+  }, [user, fetchContracts]);
+  
+  // Setup polling if there are pending documents
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    if (isPolling && user) {
+      intervalId = setInterval(() => {
+        console.log('Polling for document updates...');
+        fetchContracts();
+      }, 10000); // Poll every 10 seconds
+    }
+    
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [isPolling, user, fetchContracts]);
+  
+  // Notify user when pending documents are completed
+  useEffect(() => {
+    if (pendingDocuments === 0 && isPolling) {
+      toast({
+        title: "Processing Complete",
+        description: "Your contracts have been analyzed and are now available.",
+      });
+      setIsPolling(false);
+    }
+  }, [pendingDocuments, isPolling, toast]);
 
   // Format the date for display
   const formatDate = (dateString: string | null | undefined) => {
@@ -200,21 +256,42 @@ const ObligationsPage: React.FC = () => {
             <p className="mt-3 text-gray-600">
               Review all obligations extracted from your contracts
             </p>
+            {pendingDocuments > 0 && (
+              <div className="mt-4 bg-blue-50 text-blue-700 p-4 rounded-md inline-flex items-center">
+                <div className="animate-spin h-5 w-5 border-2 border-blue-700 border-t-transparent rounded-full mr-3"></div>
+                <span>
+                  Processing {pendingDocuments} document{pendingDocuments !== 1 ? 's' : ''}...
+                  This may take a few minutes.
+                </span>
+              </div>
+            )}
           </div>
           
           {contracts.length === 0 ? (
             <Card className="bg-white">
               <CardContent className="pt-6 flex flex-col items-center justify-center p-10 text-center">
                 <div className="rounded-full bg-gray-100 p-3 mb-4">
-                  <FileText className="h-8 w-8 text-gray-400" />
+                  {pendingDocuments > 0 ? (
+                    <div className="h-8 w-8 animate-spin border-4 border-blue-500 border-t-transparent rounded-full" />
+                  ) : (
+                    <FileText className="h-8 w-8 text-gray-400" />
+                  )}
                 </div>
-                <h3 className="text-lg font-medium mb-2">No Analyzed Contracts</h3>
-                <p className="text-gray-500 mb-6">You don't have any analyzed contracts yet.</p>
+                <h3 className="text-lg font-medium mb-2">
+                  {pendingDocuments > 0 
+                    ? "Documents Being Processed" 
+                    : "No Analyzed Contracts"}
+                </h3>
+                <p className="text-gray-500 mb-6">
+                  {pendingDocuments > 0 
+                    ? `${pendingDocuments} document${pendingDocuments !== 1 ? 's are' : ' is'} currently being processed. This page will automatically update when they're ready.`
+                    : "You don't have any analyzed contracts yet."}
+                </p>
                 <button 
                   onClick={() => navigate('/upload')}
                   className="bg-px4-teal hover:bg-px4-teal/90 text-white px-4 py-2 rounded-md"
                 >
-                  Upload Contracts
+                  {pendingDocuments > 0 ? "Upload More Contracts" : "Upload Contracts"}
                 </button>
               </CardContent>
             </Card>

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from "@/components/ui/use-toast";
@@ -12,16 +11,28 @@ import {
 } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, Clock, FileText, AlertCircle } from 'lucide-react';
+import { Calendar, Clock, FileText, AlertCircle, Tag, BookOpen, Table } from 'lucide-react';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table as UITable,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 // Define the interfaces for our data structure
 interface Obligation {
   obligation: string;
   section?: string;
-  dueDate?: string;
+  dueDate?: string | null;
   raw_response?: string;
+  documentId?: string;  // Added to track source document when consolidated
+  documentName?: string; // Added to display source document name
 }
 
 interface ContractObligations {
@@ -30,8 +41,14 @@ interface ContractObligations {
   party: string;
   status: string;
   created_at: string;
+  updated_at?: string; // Added to track processing time
   analysis_results: Obligation[] | null;
   error_message?: string;
+}
+
+interface ConsolidatedObligation extends Obligation {
+  documentId: string;
+  documentName: string;
 }
 
 const ObligationsPage: React.FC = () => {
@@ -39,6 +56,9 @@ const ObligationsPage: React.FC = () => {
   const { user, loading } = useAuth();
   const [contracts, setContracts] = useState<ContractObligations[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showConsolidated, setShowConsolidated] = useState(false);
+  const [consolidatedObligations, setConsolidatedObligations] = useState<ConsolidatedObligation[]>([]);
+  const [lastUploadDate, setLastUploadDate] = useState<string | null>(null);
   const { toast } = useToast();
 
   // Redirect to auth page if not logged in
@@ -63,10 +83,10 @@ const ObligationsPage: React.FC = () => {
         
         const { data, error } = await supabase
           .from('documents')
-          .select('id, filename, party, status, created_at, analysis_results')
+          .select('id, filename, party, status, created_at, updated_at, analysis_results')
           .eq('user_id', user.id)
           .eq('status', 'analyzed')
-          .order('created_at', { ascending: false });
+          .order('updated_at', { ascending: false });
           
         if (error) {
           console.error('Database error:', error);
@@ -74,12 +94,57 @@ const ObligationsPage: React.FC = () => {
         }
         
         // Make sure data is not null before proceeding
-        if (data) {
+        if (data && data.length > 0) {
           // Type cast to ensure TS understands this data structure
           const typedData = data as unknown as ContractObligations[];
           setContracts(typedData);
+          
+          // Determine if contracts were uploaded/processed together
+          // by checking their updated_at timestamps
+          if (typedData.length > 1) {
+            // Set the most recent upload date as reference
+            setLastUploadDate(typedData[0].updated_at || typedData[0].created_at);
+            
+            // Check if multiple contracts were uploaded in the same batch
+            const recentTime = new Date(typedData[0].updated_at || typedData[0].created_at).getTime();
+            const multipleRecentUploads = typedData.filter(contract => {
+              const contractTime = new Date(contract.updated_at || contract.created_at).getTime();
+              // Consider documents updated within 10 minutes of each other as part of the same batch
+              return Math.abs(recentTime - contractTime) < 10 * 60 * 1000;
+            }).length > 1;
+            
+            setShowConsolidated(multipleRecentUploads);
+            
+            // Create consolidated obligations list from all contracts
+            const allObligations: ConsolidatedObligation[] = [];
+            
+            typedData.forEach(contract => {
+              if (contract.analysis_results && Array.isArray(contract.analysis_results)) {
+                contract.analysis_results.forEach(obligation => {
+                  allObligations.push({
+                    ...obligation,
+                    documentId: contract.id,
+                    documentName: contract.filename
+                  });
+                });
+              }
+            });
+            
+            // Sort by due date (nulls last)
+            const sortedObligations = allObligations.sort((a, b) => {
+              if (!a.dueDate && !b.dueDate) return 0;
+              if (!a.dueDate) return 1;
+              if (!b.dueDate) return -1;
+              return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+            });
+            
+            setConsolidatedObligations(sortedObligations);
+          } else {
+            setShowConsolidated(false);
+          }
         } else {
           setContracts([]);
+          setShowConsolidated(false);
         }
       } catch (error: any) {
         console.error('Error fetching contracts:', error);
@@ -99,6 +164,18 @@ const ObligationsPage: React.FC = () => {
     }
   }, [user, toast]);
 
+  // Format the date for display
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return 'No date';
+    
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    }).format(date);
+  };
+
   // If still loading auth state, show loading indicator
   if (loading || isLoading) {
     return (
@@ -117,7 +194,7 @@ const ObligationsPage: React.FC = () => {
       <Header />
       
       <main className="flex-grow py-12 px-4 sm:px-6 bg-gray-50">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-5xl mx-auto">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-px4-navy">Your Contract Obligations</h1>
             <p className="mt-3 text-gray-600">
@@ -143,68 +220,105 @@ const ObligationsPage: React.FC = () => {
             </Card>
           ) : (
             <div className="space-y-6">
-              {contracts.map((contract) => (
-                <Card key={contract.id} className="bg-white shadow-sm">
-                  <CardHeader className="pb-3">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <CardTitle className="text-xl text-px4-navy">{contract.filename}</CardTitle>
-                        <CardDescription className="mt-1">
-                          Representing: <span className="font-medium">{contract.party}</span>
+              {showConsolidated && (
+                <Tabs defaultValue="consolidated" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2 mb-4">
+                    <TabsTrigger value="consolidated" className="flex items-center">
+                      <Table className="h-4 w-4 mr-2" />
+                      Obligation Register
+                    </TabsTrigger>
+                    <TabsTrigger value="individual" className="flex items-center">
+                      <BookOpen className="h-4 w-4 mr-2" />
+                      Individual Contracts
+                    </TabsTrigger>
+                  </TabsList>
+                  
+                  {/* Consolidated view of all obligations */}
+                  <TabsContent value="consolidated">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-xl text-px4-navy">
+                          Consolidated Obligation Register
+                        </CardTitle>
+                        <CardDescription>
+                          Showing all obligations from your contracts, ordered by due date
                         </CardDescription>
-                      </div>
-                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                        Analyzed
-                      </Badge>
+                      </CardHeader>
+                      <CardContent>
+                        {consolidatedObligations.length === 0 ? (
+                          <div className="py-4 text-center">
+                            <AlertCircle className="h-8 w-8 text-amber-500 mx-auto mb-2" />
+                            <p className="text-gray-500">No obligations were found in any of your contracts.</p>
+                          </div>
+                        ) : (
+                          <UITable>
+                            <TableCaption>A list of all your contract obligations.</TableCaption>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Obligation</TableHead>
+                                <TableHead>Source Document</TableHead>
+                                <TableHead>Section</TableHead>
+                                <TableHead>Due Date</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {consolidatedObligations.map((obligation, index) => (
+                                <TableRow key={index}>
+                                  <TableCell className="font-medium">{obligation.obligation}</TableCell>
+                                  <TableCell>
+                                    <div className="flex items-center">
+                                      <FileText className="h-4 w-4 mr-1 text-gray-400" />
+                                      {obligation.documentName}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>{obligation.section || "N/A"}</TableCell>
+                                  <TableCell>
+                                    {obligation.dueDate ? (
+                                      <div className="flex items-center text-sm">
+                                        <Calendar className="h-4 w-4 mr-1 text-gray-400" />
+                                        {formatDate(obligation.dueDate)}
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-500">No due date</span>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </UITable>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                  
+                  {/* Individual contracts view */}
+                  <TabsContent value="individual">
+                    <div className="space-y-6">
+                      {/* Individual contracts list - reusing existing code */}
+                      {contracts.map((contract) => (
+                        <SingleContractCard 
+                          key={contract.id} 
+                          contract={contract} 
+                          formatDate={formatDate}
+                        />
+                      ))}
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    {!contract.analysis_results || contract.analysis_results.length === 0 ? (
-                      <div className="py-4 text-center">
-                        <AlertCircle className="h-8 w-8 text-amber-500 mx-auto mb-2" />
-                        <p className="text-gray-500">No obligations were found for this contract.</p>
-                      </div>
-                    ) : (
-                      <Accordion type="single" collapsible className="w-full">
-                        {contract.analysis_results.map((obligation, index) => (
-                          <AccordionItem key={index} value={`item-${index}`}>
-                            <AccordionTrigger className="hover:bg-gray-50 px-4 py-3 rounded-md">
-                              <div className="text-left">
-                                <span className="font-medium">{obligation.obligation.substring(0, 80)}{obligation.obligation.length > 80 ? '...' : ''}</span>
-                                {obligation.dueDate && (
-                                  <div className="flex items-center mt-1 text-sm text-gray-500">
-                                    <Calendar className="h-3.5 w-3.5 mr-1" />
-                                    <span>Due: {obligation.dueDate}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </AccordionTrigger>
-                            <AccordionContent className="px-4 pt-2 pb-4">
-                              <div className="space-y-3">
-                                <p className="text-gray-700">{obligation.obligation}</p>
-                                
-                                {obligation.section && (
-                                  <div className="flex items-center text-sm text-gray-500">
-                                    <FileText className="h-3.5 w-3.5 mr-1" />
-                                    <span>Section: {obligation.section}</span>
-                                  </div>
-                                )}
-                                
-                                {obligation.dueDate && (
-                                  <div className="flex items-center text-sm text-gray-500">
-                                    <Clock className="h-3.5 w-3.5 mr-1" />
-                                    <span>Due date: {obligation.dueDate}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        ))}
-                      </Accordion>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                  </TabsContent>
+                </Tabs>
+              )}
+              
+              {/* If not showing consolidated view, show individual contracts */}
+              {!showConsolidated && (
+                <div className="space-y-6">
+                  {contracts.map((contract) => (
+                    <SingleContractCard 
+                      key={contract.id} 
+                      contract={contract} 
+                      formatDate={formatDate}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -212,6 +326,78 @@ const ObligationsPage: React.FC = () => {
       
       <Footer />
     </div>
+  );
+};
+
+// Extracted component for single contract display
+const SingleContractCard: React.FC<{
+  contract: ContractObligations;
+  formatDate: (date: string | null | undefined) => string;
+}> = ({ contract, formatDate }) => {
+  return (
+    <Card className="bg-white shadow-sm">
+      <CardHeader className="pb-3">
+        <div className="flex justify-between items-start">
+          <div>
+            <CardTitle className="text-xl text-px4-navy">{contract.filename}</CardTitle>
+            <CardDescription className="mt-1">
+              Representing: <span className="font-medium">{contract.party}</span>
+            </CardDescription>
+          </div>
+          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+            Analyzed
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {!contract.analysis_results || contract.analysis_results.length === 0 ? (
+          <div className="py-4 text-center">
+            <AlertCircle className="h-8 w-8 text-amber-500 mx-auto mb-2" />
+            <p className="text-gray-500">No obligations were found for this contract.</p>
+          </div>
+        ) : (
+          <Accordion type="single" collapsible className="w-full">
+            {contract.analysis_results.map((obligation, index) => (
+              <AccordionItem key={index} value={`item-${index}`}>
+                <AccordionTrigger className="hover:bg-gray-50 px-4 py-3 rounded-md">
+                  <div className="text-left w-full">
+                    <div className="flex justify-between items-start w-full pr-4">
+                      <span className="font-medium">{obligation.obligation.substring(0, 80)}{obligation.obligation.length > 80 ? '...' : ''}</span>
+                      {obligation.dueDate && (
+                        <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-700 border-blue-200 whitespace-nowrap">
+                          Due: {formatDate(obligation.dueDate)}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="px-4 pt-2 pb-4">
+                  <div className="space-y-3">
+                    <p className="text-gray-700">{obligation.obligation}</p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {obligation.section && (
+                        <div className="flex items-center text-sm text-gray-500">
+                          <Tag className="h-3.5 w-3.5 mr-1" />
+                          <span>Section: {obligation.section}</span>
+                        </div>
+                      )}
+                      
+                      {obligation.dueDate && (
+                        <div className="flex items-center text-sm text-gray-500">
+                          <Clock className="h-3.5 w-3.5 mr-1" />
+                          <span>Due date: {formatDate(obligation.dueDate)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        )}
+      </CardContent>
+    </Card>
   );
 };
 

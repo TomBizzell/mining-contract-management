@@ -244,61 +244,82 @@ async function analyzeDocument(supabaseAdmin, documentId, openai_file_id, party)
     // Process the results
     let obligations = [];
 
-    console.log(`[${documentId}] Processing OpenAI response:`, JSON.stringify(responseData).substring(0, 200) + '...');
+    console.log(`[${documentId}] Processing OpenAI response`);
     
-    if (responseData && Array.isArray(responseData) && responseData.length > 0 && responseData[0].content) {
-      // Find output_text content
-      const outputText = responseData[0].content.find(item => item.type === 'output_text');
-      if (outputText && outputText.text) {
-        const runResult = outputText.text;
+    try {
+      if (responseData && responseData.output && 
+          Array.isArray(responseData.output) && 
+          responseData.output.length > 0 && 
+          responseData.output[0].content && 
+          Array.isArray(responseData.output[0].content)) {
         
-        console.log(`[${documentId}] Output text from response: ${runResult.substring(0, 200)}...`);
+        // Find output_text content
+        const outputTextItem = responseData.output[0].content.find(item => item.type === 'output_text');
         
-        try {
-          // Try to parse the JSON data from the response
-          // Extract just the JSON part if there's additional text
-          const jsonMatch = runResult.match(/\[.*\]/s);
-          if (jsonMatch) {
-            obligations = JSON.parse(jsonMatch[0]);
-          } else {
-            // If no JSON array found, store the raw response
-            obligations = [
-              {
-                obligation: "Raw AI response (parsing failed)",
-                section: "N/A",
-                raw_response: runResult
-              }
-            ];
+        if (outputTextItem && outputTextItem.text) {
+          console.log(`[${documentId}] Found output text, processing content`);
+          let jsonText = outputTextItem.text;
+          
+          // Remove markdown code block if present
+          if (jsonText.includes('```')) {
+            jsonText = jsonText.replace(/```json\n|\```/g, '');
           }
-        } catch (parseError) {
-          console.error(`[${documentId}] Error parsing analysis results:`, parseError);
-          obligations = [
-            {
-              obligation: "Error parsing AI response",
-              section: "N/A",
-              raw_response: runResult
+          
+          console.log(`[${documentId}] Cleaned JSON text: ${jsonText.substring(0, 100)}...`);
+          
+          try {
+            // Parse the JSON directly
+            obligations = JSON.parse(jsonText);
+            console.log(`[${documentId}] Successfully parsed JSON obligations, count: ${obligations.length}`);
+          } catch (parseError) {
+            console.error(`[${documentId}] Error parsing JSON directly:`, parseError);
+            
+            // Fallback: Try to extract JSON using regex
+            try {
+              const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                obligations = JSON.parse(jsonMatch[0]);
+                console.log(`[${documentId}] Successfully parsed JSON obligations using regex, count: ${obligations.length}`);
+              } else {
+                console.error(`[${documentId}] Could not find JSON array in text`);
+                obligations = [{
+                  obligation: "Could not extract JSON from response",
+                  section: "N/A",
+                  raw_response: jsonText
+                }];
+              }
+            } catch (regexParseError) {
+              console.error(`[${documentId}] Error parsing JSON with regex:`, regexParseError);
+              obligations = [{
+                obligation: "Error parsing AI response",
+                section: "N/A",
+                raw_response: jsonText
+              }];
             }
-          ];
-        }
-      } else {
-        console.error(`[${documentId}] No output_text found in response`);
-        obligations = [
-          {
+          }
+        } else {
+          console.error(`[${documentId}] No output_text item found in content array`);
+          obligations = [{
             obligation: "No output text in response",
             section: "N/A",
             raw_response: JSON.stringify(responseData)
-          }
-        ];
-      }
-    } else {
-      console.error(`[${documentId}] Unexpected response format:`, responseData);
-      obligations = [
-        {
+          }];
+        }
+      } else {
+        console.error(`[${documentId}] Unexpected response format:`, responseData);
+        obligations = [{
           obligation: "Unexpected response format",
           section: "N/A",
           raw_response: JSON.stringify(responseData)
-        }
-      ];
+        }];
+      }
+    } catch (processingError) {
+      console.error(`[${documentId}] Error processing OpenAI response:`, processingError);
+      obligations = [{
+        obligation: "Error processing OpenAI response",
+        section: "N/A",
+        raw_response: JSON.stringify(responseData)
+      }];
     }
     // Update document with analysis results
     console.log(`[${documentId}] Updating document with analysis results`);

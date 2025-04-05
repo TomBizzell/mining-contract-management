@@ -19,7 +19,7 @@ const Index: React.FC = () => {
     {
       icon: <Search className="h-8 w-8 text-px4-teal" />,
       title: 'AI-Powered Analysis',
-      description: 'Advanced AI extracts obligations specific to your party with high accuracy.'
+      description: 'AI extracts obligations specific to your party with high accuracy.'
     },
     {
       icon: <List className="h-8 w-8 text-px4-teal" />,
@@ -29,7 +29,7 @@ const Index: React.FC = () => {
     {
       icon: <Clock className="h-8 w-8 text-px4-teal" />,
       title: 'Save Time',
-      description: 'Reduce manual review time by up to 80% while improving accuracy.'
+      description: 'Reduce manual review time.'
     }
   ];
 

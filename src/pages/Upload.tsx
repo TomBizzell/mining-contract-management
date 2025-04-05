@@ -305,10 +305,10 @@ const Upload: React.FC = () => {
           <div className="mt-8 bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
             <h2 className="text-xl font-semibold text-px4-navy mb-4">What happens next?</h2>
             <ol className="space-y-3 list-decimal list-inside text-gray-700">
-              <li>Our AI engine will process your uploaded contracts</li>
+              <li>OpenAI will process your uploaded contracts (No data is recorded for training)</li>
               <li>The system will extract all obligations relevant to your party</li>
               <li>You'll receive a structured registry of obligations categorized by type, due date, and priority</li>
-              <li>You can export the registry, set up reminders, or integrate with your existing systems</li>
+              <li>You can export the registry</li>
             </ol>
           </div>
         </div>

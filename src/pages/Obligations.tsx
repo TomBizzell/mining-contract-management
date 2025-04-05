@@ -24,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 
 // Define the interfaces for our data structure
 interface Obligation {
@@ -61,6 +62,7 @@ const ObligationsPage: React.FC = () => {
   const [lastUploadDate, setLastUploadDate] = useState<string | null>(null);
   const [pendingDocuments, setPendingDocuments] = useState<number>(0);
   const [isPolling, setIsPolling] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
   // Redirect to auth page if not logged in
@@ -81,104 +83,154 @@ const ObligationsPage: React.FC = () => {
     
     try {
       setIsLoading(true);
+      setError(null);
       
+      // Log user ID for debugging
       console.log("Fetching documents for user:", user.id);
       
-      // Fetch analyzed documents
-      const { data: analyzedData, error: analyzedError } = await supabase
+      // Simplified query to just get all documents first
+      const { data, error: fetchError } = await supabase
         .from('documents')
-        .select('*') // Get all fields for better debugging
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false });
+        .select('*')
+        .eq('user_id', user.id);
         
-      if (analyzedError) {
-        console.error('Database error fetching analyzed documents:', analyzedError);
-        throw analyzedError;
+      if (fetchError) {
+        console.error('Database error fetching documents:', fetchError);
+        setError(`Error fetching documents: ${fetchError.message || 'Unknown error'}`);
+        throw fetchError;
       }
       
-      // Log the full response for debugging
-      console.log("Received documents from database:", analyzedData);
+      // Basic validation of data
+      if (!data) {
+        console.log("No data returned from Supabase");
+        setContracts([]);
+        setShowConsolidated(false);
+        setIsLoading(false);
+        return;
+      }
       
-      // Filter analyzed documents client-side
-      const analyzedDocs = analyzedData?.filter(doc => 
-        doc.status === 'analyzed' && 
-        doc.analysis_results && 
-        Array.isArray(doc.analysis_results)
-      ) || [];
+      // Log raw data to debug
+      console.log("Raw documents data:", data);
       
-      console.log("Filtered analyzed documents:", analyzedDocs);
+      // Count documents by status
+      const statuses = data.reduce((acc, doc) => {
+        const status = doc.status || 'unknown';
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      }, {});
+      console.log("Document status counts:", statuses);
       
-      // Fetch pending and processing documents
-      const pendingDocs = analyzedData?.filter(doc => 
+      // Simple filtering for pending documents (don't do complex filtering yet)
+      const pendingDocs = data.filter(doc => 
         doc.status === 'pending' || doc.status === 'processing'
-      ) || [];
+      );
       
       // Update pending documents count
       const pendingCount = pendingDocs.length;
       setPendingDocuments(pendingCount);
       
-      // If we have pending documents, start polling
+      // Handle polling based on pending status
       if (pendingCount > 0 && !isPolling) {
         setIsPolling(true);
       } else if (pendingCount === 0) {
         setIsPolling(false);
       }
       
-      // Make sure data is not null before proceeding with analyzed documents
-      if (analyzedDocs && analyzedDocs.length > 0) {
-        // Type cast to ensure TS understands this data structure
-        const typedData = analyzedDocs as unknown as ContractObligations[];
-        setContracts(typedData);
+      // Now filter for analyzed documents
+      const analyzedDocs = data.filter(doc => doc.status === 'analyzed');
+      console.log("Analyzed documents:", analyzedDocs);
+      
+      // Check if each analyzed doc has analysis_results
+      analyzedDocs.forEach(doc => {
+        console.log(`Doc ${doc.id} analysis_results:`, doc.analysis_results);
+        if (!doc.analysis_results) {
+          console.warn(`Document ${doc.id} has status 'analyzed' but no analysis_results`);
+        } else if (!Array.isArray(doc.analysis_results)) {
+          console.warn(`Document ${doc.id} has analysis_results but it's not an array:`, 
+            typeof doc.analysis_results);
+        }
+      });
+      
+      // Filter to only the properly analyzed documents
+      const validAnalyzedDocs = analyzedDocs.filter(doc => 
+        doc.analysis_results && Array.isArray(doc.analysis_results)
+      );
+      
+      console.log("Valid analyzed documents:", validAnalyzedDocs);
+      
+      // Update state with valid analyzed documents
+      setContracts(validAnalyzedDocs);
+      
+      // Handle consolidated view logic only if we have valid documents
+      if (validAnalyzedDocs.length > 1) {
+        // Simplified consolidated logic
+        const allObligations: ConsolidatedObligation[] = [];
         
-        // Determine if contracts were uploaded/processed together
-        // by checking their updated_at timestamps
-        if (typedData.length > 1) {
-          // Set the most recent upload date as reference
-          setLastUploadDate(typedData[0].updated_at || typedData[0].created_at);
-          
-          // Check if multiple contracts were uploaded in the same batch
-          const recentTime = new Date(typedData[0].updated_at || typedData[0].created_at).getTime();
-          const multipleRecentUploads = typedData.filter(contract => {
-            const contractTime = new Date(contract.updated_at || contract.created_at).getTime();
-            // Consider documents updated within 10 minutes of each other as part of the same batch
-            return Math.abs(recentTime - contractTime) < 10 * 60 * 1000;
-          }).length > 1;
-          
-          setShowConsolidated(multipleRecentUploads);
-          
-          // Create consolidated obligations list from all contracts
-          const allObligations: ConsolidatedObligation[] = [];
-          
-          typedData.forEach(contract => {
-            if (contract.analysis_results && Array.isArray(contract.analysis_results)) {
-              contract.analysis_results.forEach(obligation => {
+        validAnalyzedDocs.forEach(contract => {
+          if (contract.analysis_results && Array.isArray(contract.analysis_results)) {
+            contract.analysis_results.forEach(obligation => {
+              try {
+                // Safely handle potentially malformed obligation objects
+                if (typeof obligation !== 'object' || obligation === null) {
+                  console.warn(`Invalid obligation format in document ${contract.id}:`, obligation);
+                  return; // Skip this obligation
+                }
+                
+                // Make sure the obligation has the required properties
+                if (!('obligation' in obligation) || typeof obligation.obligation !== 'string') {
+                  console.warn(`Obligation missing required 'obligation' property in document ${contract.id}:`, obligation);
+                  return; // Skip this obligation
+                }
+                
+                // Add to consolidated list with safe defaults for missing properties
                 allObligations.push({
                   ...obligation,
                   documentId: contract.id,
-                  documentName: contract.filename
+                  documentName: contract.filename,
+                  // Ensure section is a string
+                  section: typeof obligation.section === 'string' ? obligation.section : 'N/A',
+                  // Check dueDate format
+                  dueDate: isValidDate(obligation.dueDate) ? obligation.dueDate : null
                 });
-              });
-            }
-          });
+              } catch (err) {
+                console.error(`Error processing obligation from ${contract.id}:`, err);
+              }
+            });
+          }
+        });
+        
+        console.log("All consolidated obligations:", allObligations);
+        
+        // Sort by due date (nulls last) safely
+        const sortedObligations = [...allObligations].sort((a, b) => {
+          // Handle null/invalid date cases
+          if (!isValidDate(a.dueDate) && !isValidDate(b.dueDate)) return 0;
+          if (!isValidDate(a.dueDate)) return 1; // a goes after b
+          if (!isValidDate(b.dueDate)) return -1; // a goes before b
           
-          // Sort by due date (nulls last)
-          const sortedObligations = allObligations.sort((a, b) => {
-            if (!a.dueDate && !b.dueDate) return 0;
-            if (!a.dueDate) return 1;
-            if (!b.dueDate) return -1;
-            return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-          });
-          
+          try {
+            // Safe comparison of valid dates
+            const dateA = new Date(a.dueDate!).getTime();
+            const dateB = new Date(b.dueDate!).getTime();
+            return dateA - dateB;
+          } catch (err) {
+            console.error("Error comparing dates:", err);
+            return 0; // Keep original order if comparison fails
+          }
+        });
+        
+        if (sortedObligations.length > 0) {
+          setShowConsolidated(true);
           setConsolidatedObligations(sortedObligations);
         } else {
           setShowConsolidated(false);
         }
       } else {
-        setContracts([]);
         setShowConsolidated(false);
       }
     } catch (error: any) {
-      console.error('Error fetching contracts:', error);
+      console.error('Error in fetchContracts:', error);
+      setError(`Error: ${error.message || 'Unknown error'}`);
       toast({
         title: "Error",
         description: "Failed to load obligations data: " + error.message,
@@ -196,6 +248,23 @@ const ObligationsPage: React.FC = () => {
       fetchContracts();
     }
   }, [user, fetchContracts]);
+  
+  // Add debug mode
+  const [showDebug, setShowDebug] = useState(false);
+  
+  // Toggle debug information
+  const toggleDebug = () => {
+    setShowDebug(!showDebug);
+  };
+  
+  // Format debug data
+  const formatDebugData = (data: any) => {
+    try {
+      return JSON.stringify(data, null, 2);
+    } catch (e) {
+      return 'Error formatting data: ' + e.message;
+    }
+  };
   
   // Setup polling if there are pending documents
   useEffect(() => {
@@ -226,16 +295,40 @@ const ObligationsPage: React.FC = () => {
     }
   }, [pendingDocuments, isPolling, toast]);
 
+  // Helper to safely check if date is valid
+  const isValidDate = (dateString: string | null | undefined): boolean => {
+    if (!dateString) return false;
+    try {
+      const date = new Date(dateString);
+      return !isNaN(date.getTime());
+    } catch (e) {
+      return false;
+    }
+  };
+
   // Format the date for display
   const formatDate = (dateString: string | null | undefined) => {
     if (!dateString) return 'No date';
     
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    }).format(date);
+    try {
+      // Try to create a date object
+      const date = new Date(dateString);
+      
+      // Check if date is valid (Invalid dates return NaN for getTime())
+      if (isNaN(date.getTime())) {
+        console.warn(`Invalid date format encountered: ${dateString}`);
+        return 'Invalid date';
+      }
+      
+      return new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      }).format(date);
+    } catch (err) {
+      console.error(`Error formatting date "${dateString}":`, err);
+      return 'Invalid date';
+    }
   };
 
   // If still loading auth state, show loading indicator
@@ -262,6 +355,25 @@ const ObligationsPage: React.FC = () => {
             <p className="mt-3 text-gray-600">
               Review all obligations extracted from your contracts
             </p>
+            
+            {/* Display any errors */}
+            {error && (
+              <div className="mt-4 bg-red-50 text-red-700 p-4 rounded-md">
+                <AlertCircle className="h-5 w-5 inline-block mr-2" />
+                <span>Error: {error}</span>
+                <p className="mt-2 text-sm">
+                  If this problem persists, please reload the page or contact support.
+                  <Button 
+                    variant="link" 
+                    className="text-red-700 underline ml-2" 
+                    onClick={fetchContracts}
+                  >
+                    Try Again
+                  </Button>
+                </p>
+              </div>
+            )}
+            
             {pendingDocuments > 0 && (
               <div className="mt-4 bg-blue-50 text-blue-700 p-4 rounded-md inline-flex items-center">
                 <div className="animate-spin h-5 w-5 border-2 border-blue-700 border-t-transparent rounded-full mr-3"></div>
@@ -293,12 +405,12 @@ const ObligationsPage: React.FC = () => {
                     ? `${pendingDocuments} document${pendingDocuments !== 1 ? 's are' : ' is'} currently being processed. This page will automatically update when they're ready.`
                     : "You don't have any analyzed contracts yet."}
                 </p>
-                <button 
+                <Button 
                   onClick={() => navigate('/upload')}
                   className="bg-px4-teal hover:bg-px4-teal/90 text-white px-4 py-2 rounded-md"
                 >
                   {pendingDocuments > 0 ? "Upload More Contracts" : "Upload Contracts"}
-                </button>
+                </Button>
               </CardContent>
             </Card>
           ) : (
@@ -404,6 +516,67 @@ const ObligationsPage: React.FC = () => {
               )}
             </div>
           )}
+          
+          {/* Debug Panel */}
+          <div className="mt-12 text-right">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={toggleDebug} 
+              className="text-gray-500"
+            >
+              {showDebug ? "Hide Debug Info" : "Show Debug Info"}
+            </Button>
+          </div>
+          
+          {showDebug && (
+            <div className="mt-4 p-4 bg-gray-100 rounded-md border border-gray-300 text-left overflow-auto max-h-[500px]">
+              <h3 className="text-lg font-semibold mb-2">Debug Information</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <h4 className="font-medium">User ID:</h4>
+                  <pre className="bg-white p-2 rounded text-xs">{user?.id || 'No user'}</pre>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium">Total Documents:</h4>
+                  <pre className="bg-white p-2 rounded text-xs">{contracts.length}</pre>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium">Pending Documents:</h4>
+                  <pre className="bg-white p-2 rounded text-xs">{pendingDocuments}</pre>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium">Error State:</h4>
+                  <pre className="bg-white p-2 rounded text-xs">{error || 'No errors'}</pre>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium">Documents Data (first 3):</h4>
+                  <pre className="bg-white p-2 rounded text-xs overflow-auto">
+                    {formatDebugData(contracts.slice(0, 3))}
+                  </pre>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium">Is Polling:</h4>
+                  <pre className="bg-white p-2 rounded text-xs">{isPolling ? 'Yes' : 'No'}</pre>
+                </div>
+                
+                <Button 
+                  variant="default"
+                  size="sm"
+                  onClick={fetchContracts}
+                  className="mt-4"
+                >
+                  Refresh Data
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </main>
       
@@ -417,6 +590,34 @@ const SingleContractCard: React.FC<{
   contract: ContractObligations;
   formatDate: (date: string | null | undefined) => string;
 }> = ({ contract, formatDate }) => {
+  // Handle possible malformed data
+  let safeAnalysisResults: Obligation[] = [];
+  
+  if (contract.analysis_results && Array.isArray(contract.analysis_results)) {
+    safeAnalysisResults = contract.analysis_results
+      .filter(item => {
+        // Verify each item is a valid obligation object
+        if (!item || typeof item !== 'object') {
+          console.warn(`Invalid obligation in contract ${contract.id}:`, item);
+          return false;
+        }
+        
+        // Make sure it has the required obligation field
+        if (!('obligation' in item) || typeof item.obligation !== 'string') {
+          console.warn(`Obligation missing required field in contract ${contract.id}:`, item);
+          return false;
+        }
+        
+        return true;
+      })
+      .map(item => ({
+        // Ensure all fields have expected types
+        obligation: String(item.obligation),
+        section: typeof item.section === 'string' ? item.section : 'N/A',
+        dueDate: isValidDate(item.dueDate) ? item.dueDate : null
+      }));
+  }
+  
   return (
     <Card className="bg-white shadow-sm">
       <CardHeader className="pb-3">
@@ -427,27 +628,27 @@ const SingleContractCard: React.FC<{
               Representing: <span className="font-medium">{contract.party}</span>
             </CardDescription>
           </div>
-          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+          <Badge className="bg-green-50 text-green-700 border-green-200">
             Analyzed
           </Badge>
         </div>
       </CardHeader>
       <CardContent>
-        {!contract.analysis_results || contract.analysis_results.length === 0 ? (
+        {safeAnalysisResults.length === 0 ? (
           <div className="py-4 text-center">
             <AlertCircle className="h-8 w-8 text-amber-500 mx-auto mb-2" />
             <p className="text-gray-500">No obligations were found for this contract.</p>
           </div>
         ) : (
           <Accordion type="single" collapsible className="w-full">
-            {contract.analysis_results.map((obligation, index) => (
+            {safeAnalysisResults.map((obligation, index) => (
               <AccordionItem key={index} value={`item-${index}`}>
                 <AccordionTrigger className="hover:bg-gray-50 px-4 py-3 rounded-md">
                   <div className="text-left w-full">
                     <div className="flex justify-between items-start w-full pr-4">
                       <span className="font-medium">{obligation.obligation.substring(0, 80)}{obligation.obligation.length > 80 ? '...' : ''}</span>
-                      {obligation.dueDate && (
-                        <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-700 border-blue-200 whitespace-nowrap">
+                      {isValidDate(obligation.dueDate) && (
+                        <Badge className="ml-2 bg-blue-50 text-blue-700 border-blue-200 whitespace-nowrap">
                           Due: {formatDate(obligation.dueDate)}
                         </Badge>
                       )}
@@ -466,7 +667,7 @@ const SingleContractCard: React.FC<{
                         </div>
                       )}
                       
-                      {obligation.dueDate && (
+                      {isValidDate(obligation.dueDate) && (
                         <div className="flex items-center text-sm text-gray-500">
                           <Clock className="h-3.5 w-3.5 mr-1" />
                           <span>Due date: {formatDate(obligation.dueDate)}</span>

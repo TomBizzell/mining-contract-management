@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -19,6 +18,12 @@ const Header: React.FC = () => {
         <nav className="hidden md:flex items-center space-x-8">
           <Link to="/" className="text-gray-600 hover:text-px4-navy">Home</Link>
           <Link to="/upload" className="text-gray-600 hover:text-px4-navy">Upload</Link>
+          {user && (
+            <>
+              <Link to="/documents" className="text-gray-600 hover:text-px4-navy">My Documents</Link>
+              <Link to="/obligations" className="text-gray-600 hover:text-px4-navy">Obligations</Link>
+            </>
+          )}
         </nav>
         
         <div className="flex items-center space-x-4">

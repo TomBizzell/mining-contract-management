@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -52,9 +51,14 @@ const Index: React.FC = () => {
                 </p>
                 <div className="mt-8 flex flex-col sm:flex-row justify-center md:justify-start gap-4">
                   {user ? (
-                    <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
-                      <Link to="/upload">Upload Contracts</Link>
-                    </Button>
+                    <>
+                      <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
+                        <Link to="/upload">Upload Contracts</Link>
+                      </Button>
+                      <Button asChild size="lg" variant="outline" className="text-px4-navy border-px4-navy hover:bg-px4-navy/10 px-8">
+                        <Link to="/documents">My Documents</Link>
+                      </Button>
+                    </>
                   ) : (
                     <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
                       <Link to="/auth">Get Started</Link>
@@ -121,9 +125,14 @@ const Index: React.FC = () => {
               Join hundreds of legal professionals who save time and reduce risk with PX4 Obligation Manager.
             </p>
             {user ? (
-              <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
-                <Link to="/upload">Upload Your Contracts</Link>
-              </Button>
+              <div className="flex flex-col sm:flex-row justify-center gap-4">
+                <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
+                  <Link to="/upload">Upload Your Contracts</Link>
+                </Button>
+                <Button asChild size="lg" variant="outline" className="text-white border-white hover:bg-white/10 px-8">
+                  <Link to="/documents">View Your Documents</Link>
+                </Button>
+              </div>
             ) : (
               <Button asChild size="lg" className="bg-px4-teal hover:bg-px4-teal/90 text-white px-8">
                 <Link to="/auth">Get Started Now</Link>

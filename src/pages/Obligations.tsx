@@ -82,33 +82,39 @@ const ObligationsPage: React.FC = () => {
     try {
       setIsLoading(true);
       
+      console.log("Fetching documents for user:", user.id);
+      
       // Fetch analyzed documents
       const { data: analyzedData, error: analyzedError } = await supabase
         .from('documents')
-        .select('id, filename, party, status, created_at, updated_at, analysis_results')
+        .select('*') // Get all fields for better debugging
         .eq('user_id', user.id)
-        .eq('status', 'analyzed')
         .order('updated_at', { ascending: false });
         
       if (analyzedError) {
-        console.error('Database error:', analyzedError);
+        console.error('Database error fetching analyzed documents:', analyzedError);
         throw analyzedError;
       }
       
+      // Log the full response for debugging
+      console.log("Received documents from database:", analyzedData);
+      
+      // Filter analyzed documents client-side
+      const analyzedDocs = analyzedData?.filter(doc => 
+        doc.status === 'analyzed' && 
+        doc.analysis_results && 
+        Array.isArray(doc.analysis_results)
+      ) || [];
+      
+      console.log("Filtered analyzed documents:", analyzedDocs);
+      
       // Fetch pending and processing documents
-      const { data: pendingData, error: pendingError } = await supabase
-        .from('documents')
-        .select('id, status')
-        .eq('user_id', user.id)
-        .in('status', ['pending', 'processing'])
-        
-      if (pendingError) {
-        console.error('Database error:', pendingError);
-        throw pendingError;
-      }
+      const pendingDocs = analyzedData?.filter(doc => 
+        doc.status === 'pending' || doc.status === 'processing'
+      ) || [];
       
       // Update pending documents count
-      const pendingCount = pendingData?.length || 0;
+      const pendingCount = pendingDocs.length;
       setPendingDocuments(pendingCount);
       
       // If we have pending documents, start polling
@@ -119,9 +125,9 @@ const ObligationsPage: React.FC = () => {
       }
       
       // Make sure data is not null before proceeding with analyzed documents
-      if (analyzedData && analyzedData.length > 0) {
+      if (analyzedDocs && analyzedDocs.length > 0) {
         // Type cast to ensure TS understands this data structure
-        const typedData = analyzedData as unknown as ContractObligations[];
+        const typedData = analyzedDocs as unknown as ContractObligations[];
         setContracts(typedData);
         
         // Determine if contracts were uploaded/processed together
